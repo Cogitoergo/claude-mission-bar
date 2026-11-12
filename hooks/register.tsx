@@ -203,8 +203,40 @@ function advanced(tasks: readonly Task[]): Task[] {
   )
 }
 
-/** The plan wrapped up: a last task still in progress, with none to follow, is done. */
-function wrappedUp(tasks: readonly Task[]): Task[] {
+/**
+ * Whether a wrap-up call says the work is finished, as opposed to the turn
+ * merely ending: some field of it holds a word such as `complete` or `done`.
+ */
+function reportsDone(input: unknown): boolean {
+  if (typeof input !== 'object' || input === null) {
+    return false
+  }
+
+  return Object.entries(input).some(([key, value]) => {
+    if (key === 'tool' || key === 'tool_use_id') {
+      return false
+    }
+
+    if (typeof value === 'boolean') {
+      return value && /^(is_?)?(complete|completed|done|finished)$/i.test(key)
+    }
+
+    return (
+      typeof value === 'string' &&
+      /^(task[_ ]?)?(complete|completed|done|finished|success|succeeded)$/i.test(value.trim())
+    )
+  })
+}
+
+/**
+ * The plan wrapped up. Reported finished, every open task is done; otherwise
+ * only a last task still in progress, with none to follow, is done.
+ */
+function wrappedUp(tasks: readonly Task[], isReportedDone: boolean): Task[] {
+  if (isReportedDone) {
+    return tasks.map((task): Task => ({ ...task, status: 'completed' }))
+  }
+
   return tasks.some(task => task.status === 'pending')
     ? [...tasks]
     : tasks.map(
@@ -329,6 +361,9 @@ async function startTimer($: EngineInterface): Promise<void> {
     // then stops: nobody is waiting on a bar that cannot change.
     if (idleSince !== null && Date.now() - idleSince > IDLE_MAX_MS) {
       stopTimer()
+      // One last reading, so the bar draws as idle and not as it stood
+      // when the pause was still short.
+      void refresh($).catch(() => undefined)
 
       return
     }
@@ -591,7 +626,7 @@ export const register: Register = on => {
     const isAdvance = isTaskish && listed === null && fieldOf(e, 'advance') === true
 
     if (!hasFailed && (isWrapUp || isAdvance)) {
-      note(`${base}: ${isWrapUp ? 'wrap up' : 'advance'}`)
+      note(`${base}: ${isWrapUp ? `wrap up ${short(e, 260)}` : 'advance'}`)
       await inOrder(base, async () => {
         const before = await read($, tasksAtom)
 
@@ -599,7 +634,7 @@ export const register: Register = on => {
           return
         }
 
-        const after = isWrapUp ? wrappedUp(before) : advanced(before)
+        const after = isWrapUp ? wrappedUp(before, reportsDone(e)) : advanced(before)
 
         await update($, tasksAtom, () => after)
         await settle($, progressOf(after).done > progressOf(before).done)

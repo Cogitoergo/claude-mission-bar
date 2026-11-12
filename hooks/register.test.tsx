@@ -262,3 +262,36 @@ test('advance walks the plan, and wrap_up finishes the last task', async ($, on)
   expect((await done.find({ type: 'Text', text: /all done/ }))?.text).toMatch(/all done/)
   await done.unmount()
 })
+
+test('a wrap_up that reports the work done finishes the whole plan', async ($, on) => {
+  on('clock.now', () => ({ value: 1_000_000 }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('session.usage', () => ({
+    value: { startedAt: 0, context: { window: 200_000, percent: 10 }, rateLimits: [] },
+  }))
+  on('tool.call', () => ({ result: {} }))
+
+  const plan = {
+    tool: 'mcp__ccd_turn__update_plan',
+    items: [
+      { content: 'One', status: 'in_progress' },
+      { content: 'Two', status: 'pending' },
+    ],
+  }
+
+  await $.tool.call(plan as never)
+  // The turn merely ending leaves the plan as it stands.
+  await $.tool.call({ tool: 'mcp__ccd_turn__wrap_up', status: 'waiting' } as never)
+
+  const open = await $.ui.mount({ ...BAND, surface: 'desktop' })
+
+  expect((await open.find({ type: 'Text', text: /^0\/2$/ }))?.text).toBe('0/2')
+  await open.unmount()
+
+  await $.tool.call({ tool: 'mcp__ccd_turn__wrap_up', status: 'complete' } as never)
+
+  const done = await $.ui.mount({ ...BAND, surface: 'desktop' })
+
+  expect((await done.find({ type: 'Text', text: /all done/ }))?.text).toMatch(/all done/)
+  await done.unmount()
+})

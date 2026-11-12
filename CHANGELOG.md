@@ -6,6 +6,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-12
+
+### Fixed
+
+- A `wrap_up` call that reports the work finished now completes every open
+  task. Before, a plan Claude stopped updating stayed on its first task after
+  the work was done.
+- After a pause of more than ten minutes the bar now draws as idle; it could
+  stay in its working state indefinitely.
+
+### Added
+
+- `/mission-bar debug` shows what each `wrap_up` call contained.
+
 ## [0.6.0] - 2026-11-12
 
 ### Changed
@@ -129,7 +143,8 @@ All notable changes to this project are documented here. The format follows
   recommendation to start a new session from 80%.
 - `/mission-bar` command and a `hide` button to show or hide the bar.
 
-[Unreleased]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.4.1...v0.5.0
