@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-12
+
+### Changed
+
+- The mascot is larger and sits at the bottom right of the bar.
+- It has more animation: flying, it trails smoke with stars streaking past;
+  idle, it dozes; with every task done, it wears a tick among sparkles and
+  confetti.
+
+### Fixed
+
+- The mascot, the progress shimmer and the pulsing task marker stayed idle
+  while Claude waited on a background command. They now stay active through
+  short pauses while tasks are open.
+
 ## [0.5.1] - 2026-11-12
 
 ### Fixed
@@ -114,7 +129,8 @@ All notable changes to this project are documented here. The format follows
   recommendation to start a new session from 80%.
 - `/mission-bar` command and a `hide` button to show or hide the bar.
 
-[Unreleased]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.4.0...v0.4.1

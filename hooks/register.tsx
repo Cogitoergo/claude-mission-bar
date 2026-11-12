@@ -193,13 +193,13 @@ function patched(
 /** `update_plan`'s `advance`: the task in progress is done, the next begins. */
 function advanced(tasks: readonly Task[]): Task[] {
   const current = tasks.findIndex(task => task.status === 'in_progress')
-  const list = tasks.map((task, index): Task =>
-    index === current ? { ...task, status: 'completed' } : task,
+  const list = tasks.map(
+    (task, index): Task => (index === current ? { ...task, status: 'completed' } : task),
   )
   const following = list.findIndex(task => task.status === 'pending')
 
-  return list.map((task, index): Task =>
-    index === following ? { ...task, status: 'in_progress' } : task,
+  return list.map(
+    (task, index): Task => (index === following ? { ...task, status: 'in_progress' } : task),
   )
 }
 
@@ -207,8 +207,8 @@ function advanced(tasks: readonly Task[]): Task[] {
 function wrappedUp(tasks: readonly Task[]): Task[] {
   return tasks.some(task => task.status === 'pending')
     ? [...tasks]
-    : tasks.map((task): Task =>
-        task.status === 'in_progress' ? { ...task, status: 'completed' } : task,
+    : tasks.map(
+        (task): Task => (task.status === 'in_progress' ? { ...task, status: 'completed' } : task),
       )
 }
 
@@ -738,7 +738,16 @@ export const register: Register = on => {
     const progress = progressOf(tasks)
     const hasRun = run !== null && progress.total > 0
     const isDone = hasRun && progress.open === 0
-    const isLive = hasRun && !isDone && e.props.isWorking
+    // Work is under way during a turn, and through a short pause between
+    // turns while tasks are open: a background command, a wait.
+    const isPausedBriefly =
+      hasRun &&
+      !isDone &&
+      run.turnStartedAt === null &&
+      run.turnEndedAt !== null &&
+      meter.at - run.turnEndedAt < IDLE_MAX_MS
+    const isBusy = e.props.isWorking || isPausedBriefly
+    const isLive = hasRun && !isDone && isBusy
     const fraction = progress.total === 0 ? 0 : progress.done / progress.total
     const etaMs = hasRun ? etaMsOf(run, tasks, meter.at) : null
     const elapsed = hasRun ? formatDuration(activeMsOf(run, meter.at)) : ''
@@ -750,7 +759,14 @@ export const register: Register = on => {
     const advice = adviceOf(meter, cache)
     const adviceColor = advice?.level === 2 ? PALETTE.bad : PALETTE.warn
 
-    type Gauge = { key: string; label: string; percent: number; value: string; detail: string | null; color: string }
+    type Gauge = {
+      key: string
+      label: string
+      percent: number
+      value: string
+      detail: string | null
+      color: string
+    }
 
     // With no task list, a prompt is the unit: what this one cost, what one
     // costs on average, and how many more the 5-hour window has room for.
@@ -764,8 +780,7 @@ export const register: Register = on => {
         : prompt.endMeter === null
           ? `working ${formatDuration(promptMs)}`
           : `last prompt took ${formatDuration(promptMs)}`
-    const leftText =
-      fivePrompt.left === null ? null : `≈ ${fivePrompt.left} prompts left in 5h`
+    const leftText = fivePrompt.left === null ? null : `≈ ${fivePrompt.left} prompts left in 5h`
 
     const spendGauge = (
       key: string,
@@ -812,8 +827,18 @@ export const register: Register = on => {
     }
 
     const gauges: Gauge[] = [
-      ...spendGauge('five', '5h', spendOf(one => one.fiveHour, hasRun ? run : null, meter, etaMs), fivePrompt),
-      ...spendGauge('week', '7d', spendOf(one => one.sevenDay, hasRun ? run : null, meter, etaMs), weekPrompt),
+      ...spendGauge(
+        'five',
+        '5h',
+        spendOf(one => one.fiveHour, hasRun ? run : null, meter, etaMs),
+        fivePrompt,
+      ),
+      ...spendGauge(
+        'week',
+        '7d',
+        spendOf(one => one.sevenDay, hasRun ? run : null, meter, etaMs),
+        weekPrompt,
+      ),
     ]
     const costNow = (run?.endMeter ?? meter).costUsd
     const costBase = run?.baseline.costUsd ?? null
@@ -917,7 +942,7 @@ export const register: Register = on => {
                   </Box>
                 ),
               )}
-          {!isDone && hiddenOpen > 0 ? <Text dimColor>  +{hiddenOpen} more to do</Text> : null}
+          {!isDone && hiddenOpen > 0 ? <Text dimColor> +{hiddenOpen} more to do</Text> : null}
 
           <Box flexDirection="row" flexWrap="wrap" columnGap={3}>
             {gauges.map(gauge => (
@@ -949,7 +974,9 @@ export const register: Register = on => {
     // The graphical surfaces: vector drawings beside native text, so the
     // words follow the app's theme and the animation costs no redraws.
     const { Box, Button, Svg, Text } = $.ui.resolve(e)
-    const mood = isDone ? 'landed' : e.props.isWorking ? 'flying' : 'parked'
+    const mood = isDone ? 'landed' : isBusy ? 'flying' : 'parked'
+    const hasRows = !isDone && shown.length > 0
+    const mascotSize = hasRows ? 76 : 44
     const barWidth = Math.max(120, Math.min(280, columns * 3))
 
     return (
@@ -1003,65 +1030,69 @@ export const register: Register = on => {
               </Text>
             )}
           </Box>
-          <Box flexDirection="row" gap="sm" alignItems="center">
-            <Svg
-              source={mascotSvg(mood, 30)}
-              alt={mood === 'flying' ? 'Working' : mood === 'landed' ? 'All done' : 'Idle'}
-              width={30}
-              height={30}
-              isInteractive={mood !== 'landed'}
-            />
-            <Button key="hide" label="hide" plain dimColor onPress={hide} />
-          </Box>
+          <Button key="hide" label="hide" plain dimColor onPress={hide} />
         </Box>
 
-        {isDone || shown.length === 0 ? null : (
-          <Box flexDirection="column" gap="xs">
-            {shown.map(task =>
-              task.status === 'in_progress' ? (
-                <Box flexDirection="row" gap="sm" alignItems="center">
-                  <Svg
-                    source={isLive ? pulseSvg(14, PALETTE.accent) : ringSvg(14, 100, PALETTE.accent)}
-                    alt="in progress"
-                    width={14}
-                    height={14}
-                    isInteractive={isLive}
-                  />
-                  <Text weight="semibold" wrap="truncate-end">
-                    {task.activeForm ?? task.subject}
+        <Box flexDirection="row" justifyContent="space-between" alignItems="flex-end" gap="sm">
+          <Box flexDirection="column" gap="sm" flexGrow={1} flexShrink={1}>
+            {!hasRows ? null : (
+              <Box flexDirection="column" gap="xs">
+                {shown.map(task =>
+                  task.status === 'in_progress' ? (
+                    <Box flexDirection="row" gap="sm" alignItems="center">
+                      <Svg
+                        source={
+                          isLive ? pulseSvg(14, PALETTE.accent) : ringSvg(14, 100, PALETTE.accent)
+                        }
+                        alt="in progress"
+                        width={14}
+                        height={14}
+                        isInteractive={isLive}
+                      />
+                      <Text weight="semibold" wrap="truncate-end">
+                        {task.activeForm ?? task.subject}
+                      </Text>
+                    </Box>
+                  ) : (
+                    <Box flexDirection="row" gap="sm" alignItems="center">
+                      <Svg source={pendingSvg(14)} alt="to do" width={14} height={14} />
+                      <Text dimColor wrap="truncate-end">
+                        {task.subject}
+                      </Text>
+                    </Box>
+                  ),
+                )}
+                {hiddenOpen > 0 ? (
+                  <Text dimColor size="caption">
+                    +{hiddenOpen} more to do
                   </Text>
-                </Box>
-              ) : (
-                <Box flexDirection="row" gap="sm" alignItems="center">
-                  <Svg source={pendingSvg(14)} alt="to do" width={14} height={14} />
-                  <Text dimColor wrap="truncate-end">
-                    {task.subject}
-                  </Text>
-                </Box>
-              ),
+                ) : null}
+              </Box>
             )}
-            {hiddenOpen > 0 ? (
-              <Text dimColor size="caption">
-                +{hiddenOpen} more to do
-              </Text>
-            ) : null}
+
+            <Box flexDirection="row" flexWrap="wrap" gap="sm" alignItems="center">
+              {gauges.map(gauge => {
+                const chip = chipSvg(gauge)
+
+                return (
+                  <Svg
+                    source={chip.source}
+                    alt={[gauge.label, gauge.value, gauge.detail].filter(Boolean).join(' ')}
+                    width={chip.width}
+                    height={chip.height}
+                  />
+                )
+              })}
+              {cost === null ? null : <Text tabular>{cost}</Text>}
+            </Box>
           </Box>
-        )}
-
-        <Box flexDirection="row" flexWrap="wrap" gap="sm" alignItems="center">
-          {gauges.map(gauge => {
-            const chip = chipSvg(gauge)
-
-            return (
-              <Svg
-                source={chip.source}
-                alt={[gauge.label, gauge.value, gauge.detail].filter(Boolean).join(' ')}
-                width={chip.width}
-                height={chip.height}
-              />
-            )
-          })}
-          {cost === null ? null : <Text tabular>{cost}</Text>}
+          <Svg
+            source={mascotSvg(mood, mascotSize)}
+            alt={mood === 'flying' ? 'Working' : mood === 'landed' ? 'All done' : 'Idle'}
+            width={mascotSize}
+            height={mascotSize}
+            isInteractive
+          />
         </Box>
 
         {advice === null ? null : (

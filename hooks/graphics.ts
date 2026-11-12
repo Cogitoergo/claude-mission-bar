@@ -263,45 +263,89 @@ export function chipSvg(args: {
 export type MascotMood = 'flying' | 'parked' | 'landed'
 
 /**
- * The mascot: a small rocket. Flying, its flame flickers and stars streak
- * past; parked, it bobs slowly; landed, it wears a green tick.
+ * The mascot: a small rocket, drawn in a 64-unit box with room around it for
+ * its effects. Flying, its flame flickers, smoke trails behind and stars
+ * streak past; parked, it bobs slowly and dozes; landed, it wears a green
+ * tick among sparkles and falling confetti. All SMIL: the surface animates
+ * it, and the mod redraws nothing.
  */
 export function mascotSvg(mood: MascotMood, size: number): string {
-  const flame =
-    mood === 'flying'
-      ? `<path fill="${PALETTE.flame}" d="M15.4 24 Q18 34 20.6 24 Z">` +
-        `<animate attributeName="d" dur="0.32s" repeatCount="indefinite" ` +
-        `values="M15.4 24 Q18 34 20.6 24 Z;M15.4 24 Q18 28.5 20.6 24 Z;M15.4 24 Q18 34 20.6 24 Z"/></path>` +
-        `<path fill="${PALETTE.bad}" d="M16.6 24 Q18 29 19.4 24 Z">` +
-        `<animate attributeName="d" dur="0.26s" repeatCount="indefinite" ` +
-        `values="M16.6 24 Q18 29 19.4 24 Z;M16.6 24 Q18 26 19.4 24 Z;M16.6 24 Q18 29 19.4 24 Z"/></path>`
-      : ''
-  const star = (x: number, y: number, begin: string): string =>
-    `<circle cx="${x}" cy="${y}" r="1" fill="${PALETTE.hullEdge}" opacity="0">` +
-    `<animate attributeName="opacity" values="0;1;0" dur="1.1s" begin="${begin}" repeatCount="indefinite"/>` +
-    `<animateTransform attributeName="transform" type="translate" from="0 0" to="-9 9" dur="1.1s" begin="${begin}" repeatCount="indefinite"/></circle>`
-  const stars =
-    mood === 'flying' ? star(30, 6, '0s') + star(22, 3, '0.4s') + star(33, 15, '0.75s') : ''
-  const bob =
-    mood === 'landed'
-      ? ''
-      : `<animateTransform attributeName="transform" type="translate" dur="${mood === 'flying' ? '0.9s' : '3.2s'}" ` +
-        `repeatCount="indefinite" values="0 0;0 -1.4;0 0"/>`
-  const tick =
-    mood === 'landed'
-      ? `<circle cx="28" cy="28" r="6.5" fill="${PALETTE.good}"/>` +
-        `<path d="M24.8 28.2 L27.2 30.6 L31.4 25.8" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>`
-      : ''
+  const loop = 'repeatCount="indefinite"'
+  let behind = ''
+  let onRocket = ''
+  let front = ''
+  let motion = ''
+
+  if (mood === 'flying') {
+    const streak = (x: number, y: number, begin: number): string =>
+      `<line x1="${x}" y1="${y}" x2="${x - 5}" y2="${y + 5}" stroke="${PALETTE.hullEdge}" stroke-width="1.4" stroke-linecap="round" opacity="0">` +
+      `<animate attributeName="opacity" values="0;0.9;0" dur="0.9s" begin="${begin}s" ${loop}/>` +
+      `<animateTransform attributeName="transform" type="translate" from="6 -6" to="-14 14" dur="0.9s" begin="${begin}s" ${loop}/></line>`
+    const puff = (begin: number): string =>
+      `<circle cx="22" cy="42" r="2" fill="${PALETTE.hullEdge}" opacity="0">` +
+      `<animate attributeName="opacity" values="0;0.55;0" dur="1.2s" begin="${begin}s" ${loop}/>` +
+      `<animate attributeName="r" from="1.5" to="6" dur="1.2s" begin="${begin}s" ${loop}/>` +
+      `<animateTransform attributeName="transform" type="translate" from="0 0" to="-15 15" dur="1.2s" begin="${begin}s" ${loop}/></circle>`
+
+    behind =
+      streak(54, 10, 0) + streak(42, 4, 0.3) + streak(60, 26, 0.55) + streak(30, 2, 0.75) +
+      puff(0) + puff(0.4) + puff(0.8)
+    onRocket =
+      `<ellipse cx="18" cy="27" rx="5" ry="6" fill="${PALETTE.flame}" opacity="0.25">` +
+      `<animate attributeName="opacity" values="0.15;0.4;0.15" dur="0.4s" ${loop}/></ellipse>` +
+      `<path fill="${PALETTE.flame}" d="M15.2 24 Q18 36 20.8 24 Z">` +
+      `<animate attributeName="d" dur="0.3s" ${loop} values="M15.2 24 Q18 36 20.8 24 Z;M15.2 24 Q18 29 20.8 24 Z;M15.2 24 Q18 36 20.8 24 Z"/></path>` +
+      `<path fill="${PALETTE.bad}" d="M16.5 24 Q18 30 19.5 24 Z">` +
+      `<animate attributeName="d" dur="0.24s" ${loop} values="M16.5 24 Q18 30 19.5 24 Z;M16.5 24 Q18 26.5 19.5 24 Z;M16.5 24 Q18 30 19.5 24 Z"/></path>`
+    motion =
+      `<animateTransform attributeName="transform" type="translate" dur="0.7s" ${loop} values="0 0;1.2 -1.6;-0.6 0.4;0 0"/>`
+  } else if (mood === 'parked') {
+    const doze = (x: number, y: number, scale: number, begin: number): string =>
+      `<text x="${x}" y="${y}" font-family="system-ui,sans-serif" font-weight="700" font-size="${9 * scale}" fill="${PALETTE.hullEdge}" opacity="0">z` +
+      `<animate attributeName="opacity" values="0;0.9;0" dur="3s" begin="${begin}s" ${loop}/>` +
+      `<animateTransform attributeName="transform" type="translate" from="0 0" to="5 -9" dur="3s" begin="${begin}s" ${loop}/></text>`
+
+    front = doze(44, 20, 0.8, 0) + doze(49, 13, 1.1, 1) + doze(54, 8, 1.4, 2)
+    motion =
+      `<animateTransform attributeName="transform" type="translate" dur="3.4s" ${loop} values="0 0;0 -1.6;0 0"/>`
+  } else {
+    const sparkle = (x: number, y: number, begin: number, color: string): string =>
+      `<path d="M${x} ${y - 4} L${x + 1.2} ${y - 1.2} L${x + 4} ${y} L${x + 1.2} ${y + 1.2} L${x} ${y + 4} L${x - 1.2} ${y + 1.2} L${x - 4} ${y} L${x - 1.2} ${y - 1.2} Z" fill="${color}" opacity="0">` +
+      `<animate attributeName="opacity" values="0;1;0" dur="1.6s" begin="${begin}s" ${loop}/></path>`
+    const confetti = (x: number, begin: number, color: string): string =>
+      `<rect x="${x}" y="-3" width="2.4" height="4" rx="0.6" fill="${color}" opacity="0">` +
+      `<animate attributeName="opacity" values="0;1;1;0" dur="2.4s" begin="${begin}s" ${loop}/>` +
+      `<animateTransform attributeName="transform" type="translate" from="0 0" to="${x % 2 === 0 ? 4 : -4} 62" dur="2.4s" begin="${begin}s" ${loop}/></rect>`
+
+    behind =
+      confetti(8, 0, PALETTE.from) + confetti(21, 0.5, PALETTE.flame) + confetti(34, 1.1, PALETTE.good) +
+      confetti(47, 0.3, PALETTE.info) + confetti(56, 1.6, PALETTE.accent)
+    front =
+      sparkle(10, 14, 0, PALETTE.flame) + sparkle(54, 12, 0.5, PALETTE.info) + sparkle(8, 44, 1, PALETTE.from) +
+      `<g><circle cx="48" cy="48" r="10" fill="${PALETTE.good}"/>` +
+      `<path d="M43.2 48.4 L46.8 52 L53.2 44.6" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>` +
+      `<animateTransform attributeName="transform" type="scale" additive="sum" dur="1.8s" ${loop} values="1;1.08;1"/>` +
+      `<animateTransform attributeName="transform" type="translate" additive="sum" dur="1.8s" ${loop} values="0 0;-3.8 -3.8;0 0"/></g>`
+    motion =
+      `<animateTransform attributeName="transform" type="translate" dur="2.6s" ${loop} values="0 0;0 -1;0 0"/>`
+  }
+
+  const glint =
+    `<circle cx="18" cy="17" r="2.5" fill="${PALETTE.info}" stroke="#fff" stroke-width="0.8">` +
+    (mood === 'parked'
+      ? `<animate attributeName="opacity" values="1;1;0.35;1" dur="4s" ${loop}/>`
+      : `<animate attributeName="fill" values="${PALETTE.info};#7dd3fc;${PALETTE.info}" dur="1.2s" ${loop}/>`) +
+    `</circle>`
 
   return (
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 36 36">` +
-    `<style>:root{color-scheme:light dark}</style>${stars}<g>${bob}` +
-    `<g transform="rotate(45 18 18)">${flame}` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 64 64">` +
+    `<style>:root{color-scheme:light dark}</style>${behind}<g>${motion}` +
+    `<g transform="translate(5 5) scale(1.5) rotate(45 18 18)">${onRocket}` +
     `<path d="M14 20 L9.6 26.4 L14.4 24.6 Z" fill="${PALETTE.accent}"/>` +
     `<path d="M22 20 L26.4 26.4 L21.6 24.6 Z" fill="${PALETTE.accent}"/>` +
     `<path d="M18 4.5 C23.2 9.6 24.2 17 22 24 L14 24 C11.8 17 12.8 9.6 18 4.5 Z" fill="${PALETTE.hull}" stroke="${PALETTE.hullEdge}" stroke-width="0.8"/>` +
     `<path d="M18 4.5 C20.6 7 22.1 9.8 22.9 12.6 L13.1 12.6 C13.9 9.8 15.4 7 18 4.5 Z" fill="${PALETTE.accent}"/>` +
-    `<circle cx="18" cy="17" r="2.5" fill="${PALETTE.info}" stroke="#fff" stroke-width="0.8"/>` +
-    `</g></g>${tick}</svg>`
+    glint +
+    `</g></g>${front}</svg>`
   )
 }
