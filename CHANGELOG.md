@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-12
+
+### Changed
+
+- Redesigned the bar. In the desktop app, VS Code and mobile it now draws
+  vector graphics: a gradient progress bar, ring gauges for the 5-hour and
+  7-day windows, context and cache, and a larger ETA.
+- In the terminal the progress bar is a colour gradient, each figure has a
+  small meter, and gauges turn amber and red as they fill.
+
+### Added
+
+- Animation while a turn runs: a highlight sweeping the progress bar and a
+  pulsing marker on the task in progress. The apps animate the drawings
+  themselves; the terminal redraws four times a second, and only while a
+  turn is running.
+
 ## [0.1.0] - 2026-11-12
 
 ### Added
@@ -22,5 +39,6 @@ All notable changes to this project are documented here. The format follows
   recommendation to start a new session from 80%.
 - `/mission-bar` command and a `hide` button to show or hide the bar.
 
-[Unreleased]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Cogitoergo/claude-mission-bar/releases/tag/v0.1.0

@@ -8,18 +8,28 @@ prompt showing where the current work stands: task progress, a live ETA, how
 much of your 5-hour and weekly usage the tasks are costing, and when the
 context is full enough that a new session would be cheaper.
 
+![The bar on a dark and a light background](docs/preview.png)
+
+*An illustration of the bar's drawings in the desktop app, on dark and light
+backgrounds. The app's own fonts and spacing apply.*
+
+In the terminal the same figures are drawn in coloured characters:
+
 ```
 ╭──────────────────────────────────────────────────────────────────────────────╮
-│ ◆ MISSION ████████░░░░░░░░░░░░ 2/5  ETA ~36m  elapsed 24m               hide │
-│ ▶ Wiring the export endpoint                                                 │
+│ ◆ MISSION ━━━━━━━━━━━━━━━━━━━━━━━━ 2/5 ETA ~36m elapsed 24m             hide │
+│ ⠹ Wiring the export endpoint                                                 │
 │ ○ Add pagination to the list view                                            │
-│ ○ Write integration tests                                                    │
-│ 5h 41% · tasks +6.5% · ~+9.8% to go   7d 18% · tasks +0.9% · ~+1.4% to go    │
-│ context 62%   cache 94%                                                      │
+│ 5h ▰▰▰▱▱▱▱▱ 41% tasks +6.5% · ~+9.8% to go   7d ▰▱▱▱▱▱▱▱ 18% tasks +0.9%     │
+│ context ▰▰▰▰▰▱▱▱ 62%   cache ▰▰▰▰▰▰▰▰ 94%                                    │
 │ ⚠ Context 62% full: plan a new session, or /compact, at the next natural     │
 │   break.                                                                     │
 ╰──────────────────────────────────────────────────────────────────────────────╯
 ```
+
+While a turn runs the progress bar shimmers and the task in progress pulses.
+The apps animate their own drawings; the terminal redraws four times a second,
+and only during a turn.
 
 It makes no model requests. Every figure is one the session already holds, so
 the bar adds nothing to your usage.

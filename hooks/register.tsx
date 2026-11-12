@@ -3,9 +3,11 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { Cache, Limit, Meter, Run, Task, TaskStatus } from '../types'
 import {
+  CACHE_POOR,
+  CONTEXT_NOTE,
+  CONTEXT_SWITCH,
   activeMsOf,
   adviceOf,
-  barOf,
   cacheHitOf,
   contextLevelOf,
   etaMsOf,
@@ -15,10 +17,24 @@ import {
   spendOf,
 } from './estimate'
 import type { Spend } from './estimate'
+import {
+  PALETTE,
+  SPINNER,
+  gradientCells,
+  levelColor,
+  logoSvg,
+  meterCells,
+  pendingSvg,
+  progressSvg,
+  pulseSvg,
+  ringSvg,
+} from './graphics'
 
 const PLUGIN = 'mission-bar'
 /** How often the bar re-reads the usage figures while a turn runs. */
 const TICK_MS = 15_000
+/** How often the terminal's animation advances while a turn runs. */
+const FRAME_MS = 250
 /** Task rows the bar lists before folding the rest into a count. */
 const MAX_TASK_ROWS = 3
 
@@ -38,6 +54,7 @@ const cacheAtom = atom({ plugin: 'mission-bar', key: 'cache' } as const, null, {
 })
 const isHiddenAtom = atom({ plugin: 'mission-bar', key: 'isHidden' } as const, false)
 const warnedAtom = atom({ plugin: 'mission-bar', key: 'warned' } as const, 0)
+const frameAtom = atom({ plugin: 'mission-bar', key: 'frame' } as const, 0)
 
 function fieldOf(value: unknown, key: string): unknown {
   return typeof value === 'object' && value !== null
@@ -119,17 +136,37 @@ async function refresh($: EngineInterface): Promise<Meter> {
 }
 
 let timer: Timer | null = null
+let frameTimer: Timer | null = null
+// Each start and stop takes a new number, so a start that was still waiting
+// when a stop came sets no timer.
+let timerRun = 0
 
 function stopTimer(): void {
+  timerRun += 1
   timer?.cancel()
   timer = null
+  frameTimer?.cancel()
+  frameTimer = null
 }
 
-function startTimer($: EngineInterface): void {
+async function startTimer($: EngineInterface): Promise<void> {
   stopTimer()
+
+  const mine = timerRun
+
   timer = $.clock.every(TICK_MS, () => {
     void refresh($).catch(() => undefined)
   })
+
+  // Only a terminal is animated by redrawing: the apps animate their own
+  // vector drawings, so no frames are spent where no terminal is attached.
+  const surfaces = await $.session.surfaces()
+
+  if (mine === timerRun && surfaces.includes('terminal')) {
+    frameTimer = $.clock.every(FRAME_MS, () => {
+      void update($, frameAtom, frame => (frame + 1) % 1_000_000).catch(() => undefined)
+    })
+  }
 }
 
 /** Opens a run when none is open, and settles the books when all is done. */
@@ -218,7 +255,7 @@ export const register: Register = on => {
           ? { ...run, turnStartedAt: meter.at }
           : run,
       )
-      startTimer($)
+      await startTimer($)
     }
 
     return next(e)
@@ -380,25 +417,33 @@ export const register: Register = on => {
       read($, runAtom),
       read($, cacheAtom),
     ])
-    const { Box, Button, Text } = $.ui.resolve(e)
+
+    // What the bar says, the same on every surface; how it is drawn follows.
     const columns = Math.max(24, e.props.bodyColumns)
     const isNarrow = columns < 64
     const progress = progressOf(tasks)
     const hasRun = run !== null && progress.total > 0
     const isDone = hasRun && progress.open === 0
+    const isLive = hasRun && !isDone && e.props.isWorking
+    const fraction = progress.total === 0 ? 0 : progress.done / progress.total
     const etaMs = hasRun ? etaMsOf(run, tasks, meter.at) : null
-    const elapsed = hasRun ? formatDuration(activeMsOf(run, meter.at)) : null
-    const bar = barOf(
-      progress.total === 0 ? 0 : progress.done / progress.total,
-      isNarrow ? 10 : 20,
-    )
+    const elapsed = hasRun ? formatDuration(activeMsOf(run, meter.at)) : ''
+    const count = `${progress.done}/${progress.total}`
+    const etaText = etaMs === null ? 'ETA after first task' : `ETA ~${formatDuration(etaMs)}`
+    const doneText = `✔ all done in ${elapsed}`
+    const shown = [...progress.current, ...progress.pending].slice(0, MAX_TASK_ROWS)
+    const hiddenOpen = progress.open - shown.length
+    const advice = adviceOf(meter, cache)
+    const adviceColor = advice?.level === 2 ? PALETTE.bad : PALETTE.warn
 
-    const spendText = (label: string, spend: Spend | null): string | null => {
+    type Gauge = { key: string; label: string; percent: number; value: string; detail: string | null; color: string }
+
+    const spendGauge = (key: string, label: string, spend: Spend | null): Gauge[] => {
       if (spend === null) {
-        return null
+        return []
       }
 
-      const parts = [`${label} ${formatPercent(spend.used)}%`]
+      const parts: string[] = []
 
       if (hasRun) {
         parts.push(`tasks +${formatPercent(spend.spent)}%`)
@@ -408,130 +453,270 @@ export const register: Register = on => {
         }
       }
 
-      return parts.join(' · ')
+      return [
+        {
+          key,
+          label,
+          percent: spend.used,
+          value: `${formatPercent(spend.used)}%`,
+          detail: parts.length === 0 ? null : parts.join(' · '),
+          color: levelColor(spend.used, 70, 90),
+        },
+      ]
     }
 
-    const fiveHour = spendText(
-      '5h',
-      spendOf(one => one.fiveHour, hasRun ? run : null, meter, etaMs),
-    )
-    const sevenDay = spendText(
-      '7d',
-      spendOf(one => one.sevenDay, hasRun ? run : null, meter, etaMs),
-    )
+    const gauges: Gauge[] = [
+      ...spendGauge('five', '5h', spendOf(one => one.fiveHour, hasRun ? run : null, meter, etaMs)),
+      ...spendGauge('week', '7d', spendOf(one => one.sevenDay, hasRun ? run : null, meter, etaMs)),
+    ]
     const costNow = (run?.endMeter ?? meter).costUsd
     const costBase = run?.baseline.costUsd ?? null
     const cost =
-      fiveHour === null && sevenDay === null && costNow !== null
+      gauges.length === 0 && costNow !== null
         ? hasRun && costBase !== null
           ? `cost $${costNow.toFixed(2)} · tasks +$${Math.max(0, costNow - costBase).toFixed(2)}`
           : `cost $${costNow.toFixed(2)}`
         : null
 
-    const contextLevel = contextLevelOf(meter.contextPercent)
-    const contextColor =
-      contextLevel === 2 ? 'error' : contextLevel === 1 ? 'warning' : 'success'
-    const cacheHit = cacheHitOf(cache)
-    const advice = adviceOf(meter, cache)
+    if (meter.contextPercent !== null) {
+      gauges.push({
+        key: 'context',
+        label: 'context',
+        percent: meter.contextPercent,
+        value: `${meter.contextPercent}%`,
+        detail: null,
+        color: levelColor(meter.contextPercent, CONTEXT_NOTE, CONTEXT_SWITCH),
+      })
+    }
 
-    const shown = [...progress.current, ...progress.pending].slice(0, MAX_TASK_ROWS)
-    const hiddenOpen = progress.open - shown.length
+    const cacheHit = cacheHitOf(cache)
+
+    if (cacheHit !== null) {
+      gauges.push({
+        key: 'cache',
+        label: 'cache',
+        percent: cacheHit,
+        value: `${cacheHit}%`,
+        detail: null,
+        // The cache is the one gauge where low is the bad end.
+        color: cacheHit < CACHE_POOR ? PALETTE.warn : PALETTE.good,
+      })
+    }
+
+    const hide = () => update($, isHiddenAtom, () => true)
+
+    if (e.surface === 'terminal') {
+      const { Box, Button, Text } = $.ui.resolve(e)
+      const frame = isLive ? await read($, frameAtom) : null
+      const bar = gradientCells(fraction, isNarrow ? 12 : 24, frame)
+      const spinner = SPINNER[(frame ?? 0) % SPINNER.length] ?? '▶'
+
+      return (
+        <Box
+          flexDirection="column"
+          borderStyle="round"
+          borderColor={advice?.level === 2 ? PALETTE.bad : PALETTE.from}
+          paddingX={1}
+        >
+          <Box flexDirection="row" justifyContent="space-between">
+            <Box flexDirection="row" gap={1}>
+              <Text color={PALETTE.accent} weight="bold">
+                ◆ MISSION
+              </Text>
+              {hasRun ? (
+                <Box flexDirection="row" gap={1}>
+                  <Box flexDirection="row">
+                    {bar.map(cell => (
+                      <Text color={cell.color}>{cell.char}</Text>
+                    ))}
+                  </Box>
+                  <Text weight="bold">{count}</Text>
+                  {isDone ? (
+                    <Text color={PALETTE.good} weight="bold">
+                      {doneText}
+                    </Text>
+                  ) : (
+                    <Text color={PALETTE.info} weight="bold">
+                      {etaText}
+                    </Text>
+                  )}
+                  {isDone || isNarrow ? null : <Text dimColor>elapsed {elapsed}</Text>}
+                </Box>
+              ) : (
+                <Text dimColor>no tasks tracked yet</Text>
+              )}
+            </Box>
+            <Button key="hide" label="hide" plain dimColor onPress={hide} />
+          </Box>
+
+          {isDone
+            ? null
+            : shown.map(task =>
+                task.status === 'in_progress' ? (
+                  <Box flexDirection="row" gap={1}>
+                    <Text color={PALETTE.accent}>{isLive ? spinner : '▶'}</Text>
+                    <Text weight="bold" wrap="truncate-end">
+                      {task.activeForm ?? task.subject}
+                    </Text>
+                  </Box>
+                ) : (
+                  <Box flexDirection="row" gap={1}>
+                    <Text color={PALETTE.track}>○</Text>
+                    <Text dimColor wrap="truncate-end">
+                      {task.subject}
+                    </Text>
+                  </Box>
+                ),
+              )}
+          {!isDone && hiddenOpen > 0 ? <Text dimColor>  +{hiddenOpen} more to do</Text> : null}
+
+          <Box flexDirection="row" flexWrap="wrap" columnGap={3}>
+            {gauges.map(gauge => (
+              <Box flexDirection="row" gap={1}>
+                <Text weight="bold">{gauge.label}</Text>
+                <Box flexDirection="row">
+                  {meterCells(gauge.percent, 8, gauge.color).map(cell => (
+                    <Text color={cell.color}>{cell.char}</Text>
+                  ))}
+                </Box>
+                <Text color={gauge.color} weight="bold">
+                  {gauge.value}
+                </Text>
+                {gauge.detail === null ? null : <Text dimColor>{gauge.detail}</Text>}
+              </Box>
+            ))}
+            {cost === null ? null : <Text>{cost}</Text>}
+          </Box>
+
+          {advice === null ? null : (
+            <Text color={adviceColor} wrap="wrap">
+              ⚠ {advice.text}
+            </Text>
+          )}
+        </Box>
+      )
+    }
+
+    // The graphical surfaces: vector drawings beside native text, so the
+    // words follow the app's theme and the animation costs no redraws.
+    const { Box, Button, Svg, Text } = $.ui.resolve(e)
+    const barWidth = Math.max(120, Math.min(280, columns * 3))
 
     return (
       <Box
         flexDirection="column"
         borderStyle="round"
-        borderColor={advice?.level === 2 ? 'error' : 'promptBorder'}
-        paddingX={1}
+        borderColor={advice?.level === 2 ? PALETTE.bad : PALETTE.trackSoft}
+        paddingX="md"
+        paddingY="sm"
+        gap="sm"
       >
-        <Box flexDirection="row" justifyContent="space-between">
-          <Box flexDirection="row" gap={1}>
-            <Text color="claude" weight="bold">
-              ◆ MISSION
+        <Box flexDirection="row" justifyContent="space-between" alignItems="center">
+          <Box flexDirection="row" gap="sm" alignItems="center" flexWrap="wrap">
+            <Svg source={logoSvg(16)} alt="" width={16} height={16} />
+            <Text color={PALETTE.accent} size="caption" weight="bold">
+              MISSION
             </Text>
             {hasRun ? (
-              <Box flexDirection="row" gap={1}>
-                <Box flexDirection="row">
-                  <Text color="success">{bar.filled}</Text>
-                  <Text color="inactive">{bar.empty}</Text>
-                </Box>
-                <Text weight="bold" tabular>
-                  {progress.done}/{progress.total}
-                </Text>
-                {isDone ? (
-                  <Text color="success">✔ all done in {elapsed}</Text>
-                ) : (
-                  <Text color="suggestion" tabular>
-                    {etaMs === null
-                      ? 'ETA after first task'
-                      : `ETA ~${formatDuration(etaMs)}`}
-                  </Text>
-                )}
-                {isDone || isNarrow ? null : (
-                  <Text dimColor tabular>
-                    elapsed {elapsed}
-                  </Text>
-                )}
-              </Box>
+              <Svg
+                source={progressSvg({ width: barWidth, height: 10, fraction, isAnimated: isLive })}
+                alt={`${count} tasks done`}
+                width={barWidth}
+                height={10}
+                isInteractive={isLive}
+              />
+            ) : null}
+            {hasRun ? (
+              <Text weight="bold" tabular>
+                {count}
+              </Text>
             ) : (
               <Text dimColor>no tasks tracked yet</Text>
             )}
+            {!hasRun ? null : isDone ? (
+              <Text color={PALETTE.good} size="heading" weight="semibold">
+                {doneText}
+              </Text>
+            ) : (
+              <Text color={PALETTE.info} size="heading" weight="semibold" tabular>
+                {etaText}
+              </Text>
+            )}
+            {!hasRun || isDone || isNarrow ? null : (
+              <Text dimColor size="caption" tabular>
+                elapsed {elapsed}
+              </Text>
+            )}
           </Box>
-          <Button
-            key="hide"
-            label="hide"
-            plain
-            dimColor
-            onPress={() => update($, isHiddenAtom, () => true)}
-          />
+          <Button key="hide" label="hide" plain dimColor onPress={hide} />
         </Box>
 
-        {isDone
-          ? null
-          : shown.map(task => (
-              <Box flexDirection="row" gap={1}>
-                <Text color={task.status === 'in_progress' ? 'claude' : 'inactive'}>
-                  {task.status === 'in_progress' ? '▶' : '○'}
-                </Text>
-                {task.status === 'in_progress' ? (
-                  <Text weight="bold" wrap="truncate-end">
+        {isDone || shown.length === 0 ? null : (
+          <Box flexDirection="column" gap="xs">
+            {shown.map(task =>
+              task.status === 'in_progress' ? (
+                <Box flexDirection="row" gap="sm" alignItems="center">
+                  <Svg
+                    source={isLive ? pulseSvg(14, PALETTE.accent) : ringSvg(14, 100, PALETTE.accent)}
+                    alt="in progress"
+                    width={14}
+                    height={14}
+                    isInteractive={isLive}
+                  />
+                  <Text weight="semibold" wrap="truncate-end">
                     {task.activeForm ?? task.subject}
                   </Text>
-                ) : (
+                </Box>
+              ) : (
+                <Box flexDirection="row" gap="sm" alignItems="center">
+                  <Svg source={pendingSvg(14)} alt="to do" width={14} height={14} />
                   <Text dimColor wrap="truncate-end">
                     {task.subject}
                   </Text>
-                )}
-              </Box>
-            ))}
-        {!isDone && hiddenOpen > 0 ? (
-          <Text dimColor>  +{hiddenOpen} more to do</Text>
-        ) : null}
+                </Box>
+              ),
+            )}
+            {hiddenOpen > 0 ? (
+              <Text dimColor size="caption">
+                +{hiddenOpen} more to do
+              </Text>
+            ) : null}
+          </Box>
+        )}
 
-        <Box flexDirection="row" flexWrap="wrap" columnGap={3}>
-          {fiveHour === null ? null : <Text tabular>{fiveHour}</Text>}
-          {sevenDay === null ? null : <Text tabular>{sevenDay}</Text>}
+        <Box flexDirection="row" flexWrap="wrap" gap="sm">
+          {gauges.map(gauge => (
+            <Box
+              flexDirection="row"
+              gap="xs"
+              alignItems="center"
+              backgroundColor={PALETTE.chip}
+              paddingX="sm"
+            >
+              <Svg
+                source={ringSvg(18, gauge.percent, gauge.color)}
+                alt={`${gauge.label} ${gauge.value}`}
+                width={18}
+                height={18}
+              />
+              <Text size="caption" weight="semibold">
+                {gauge.label}
+              </Text>
+              <Text color={gauge.color} weight="bold" tabular>
+                {gauge.value}
+              </Text>
+              {gauge.detail === null ? null : (
+                <Text dimColor size="caption" tabular>
+                  {gauge.detail}
+                </Text>
+              )}
+            </Box>
+          ))}
           {cost === null ? null : <Text tabular>{cost}</Text>}
-          {meter.contextPercent === null ? null : (
-            <Box flexDirection="row" gap={1}>
-              <Text dimColor>context</Text>
-              <Text color={contextColor} weight="bold" tabular>
-                {meter.contextPercent}%
-              </Text>
-            </Box>
-          )}
-          {cacheHit === null ? null : (
-            <Box flexDirection="row" gap={1}>
-              <Text dimColor>cache</Text>
-              <Text color={cacheHit < 50 ? 'warning' : 'success'} tabular>
-                {cacheHit}%
-              </Text>
-            </Box>
-          )}
         </Box>
 
         {advice === null ? null : (
-          <Text color={advice.level === 2 ? 'error' : 'warning'} wrap="wrap">
+          <Text color={adviceColor} wrap="wrap">
             ⚠ {advice.text}
           </Text>
         )}

@@ -75,13 +75,26 @@ test('progress, ETA, usage and context advice, on every surface', async ($, on) 
 
     expect((await ui.find({ type: 'Text', text: /^1\/3$/ }))?.text).toBe('1/3')
     expect((await ui.find({ type: 'Text', text: /^ETA/ }))?.text).toBe('ETA ~20m')
-    expect((await ui.find({ type: 'Text', text: /^5h/ }))?.text).toBe(
-      '5h 24% · tasks +4% · ~+8% to go',
+    expect((await ui.find({ type: 'Text', text: /^24%$/ }))?.text).toBe('24%')
+    expect((await ui.find({ type: 'Text', text: /to go/ }))?.text).toBe(
+      'tasks +4% · ~+8% to go',
     )
     expect(await ui.find({ type: 'Text', text: /Step 2/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /new session/ })).toBeDefined()
     await ui.unmount()
   }
+
+  // The apps get vector drawings; the terminal gets coloured cells.
+  const app = await $.ui.mount({ ...BAND, surface: 'desktop' })
+
+  expect(await app.find({ type: 'Svg' })).toBeDefined()
+  await app.unmount()
+
+  const terminal = await $.ui.mount({ ...BAND, surface: 'terminal' })
+
+  expect(await terminal.find({ type: 'Text', text: /^━$/ })).toBeDefined()
+  expect(await terminal.find({ type: 'Text', text: /^▰$/ })).toBeDefined()
+  await terminal.unmount()
 
   now += 20 * MINUTE
   fiveHour = 32
@@ -93,9 +106,7 @@ test('progress, ETA, usage and context advice, on every surface', async ($, on) 
   expect((await ui.find({ type: 'Text', text: /all done/ }))?.text).toBe(
     '✔ all done in 30m',
   )
-  expect((await ui.find({ type: 'Text', text: /^5h/ }))?.text).toBe(
-    '5h 32% · tasks +12%',
-  )
+  expect((await ui.find({ type: 'Text', text: /^tasks/ }))?.text).toBe('tasks +12%')
   await ui.press({ key: 'hide' })
   await ui.unmount()
 })

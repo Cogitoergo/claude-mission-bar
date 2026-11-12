@@ -49,6 +49,8 @@ declare module 'claude-code' {
       cache: Shaped<Cache | null>
       isHidden: boolean
       warned: number
+      /** The terminal animation's frame counter, advanced while a turn runs. */
+      frame: number
     }
   }
 }

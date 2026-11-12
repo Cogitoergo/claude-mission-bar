@@ -9,6 +9,7 @@ Issues and pull requests are welcome.
 | `.claude-plugin/plugin.json` | The plugin manifest |
 | `.claude-plugin/marketplace.json` | Makes this repository installable as a marketplace |
 | `hooks/register.tsx` | The hooks module: event hooks and the bar's drawing |
+| `hooks/graphics.ts` | Palette, terminal cells and the SVG drawings |
 | `hooks/estimate.ts` | Pure functions: ETA, usage projection, advice, formatting |
 | `hooks/register.test.tsx` | Tests, run by `claude plugin test` |
 | `types/index.d.ts` | The contract for the values the mod keeps in `$.state` |
