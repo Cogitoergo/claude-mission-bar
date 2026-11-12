@@ -204,4 +204,15 @@ test('a whole-list tool such as update_plan is followed', async ($, on) => {
   expect((await ui.find({ type: 'Text', text: /^1\/3$/ }))?.text).toBe('1/3')
   expect(await ui.find({ type: 'Text', text: /Run the tests/ })).toBeDefined()
   await ui.unmount()
+
+  // A later call that carries statuses alone changes the tasks already known.
+  await $.tool.call({
+    tool: 'update_plan',
+    plan: [{ status: 'completed' }, { status: 'completed' }, { status: 'in_progress' }],
+  } as never)
+
+  const later = await $.ui.mount({ ...BAND, surface: 'desktop' })
+
+  expect((await later.find({ type: 'Text', text: /^2\/3$/ }))?.text).toBe('2/3')
+  await later.unmount()
 })

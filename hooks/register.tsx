@@ -39,6 +39,8 @@ const TICK_MS = 15_000
 const FRAME_MS = 250
 /** Task rows the bar lists before folding the rest into a count. */
 const MAX_TASK_ROWS = 3
+/** How long a task-list update may take before later ones stop waiting on it. */
+const STUCK_MS = 4_000
 
 // Change a tag when the value's fields change: it declines what an earlier
 // version stored, which outlives a reload.
@@ -97,11 +99,28 @@ function statusOf(value: unknown): TaskStatus | null {
 const LIST_FIELDS = ['todos', 'plan', 'steps', 'tasks', 'items']
 const TEXT_FIELDS = ['content', 'subject', 'step', 'title', 'text', 'name', 'description']
 
+type Listed =
+  | { kind: 'full'; tasks: Task[] }
+  // Entries that carry a status and no words: changes to tasks already known.
+  | { kind: 'patch'; patches: { key: string | null; status: TaskStatus }[] }
+
+function keyOf(entry: unknown): string | null {
+  for (const name of ['id', 'index', 'taskId', 'task_id']) {
+    const value = fieldOf(entry, name)
+
+    if (typeof value === 'number' || typeof value === 'string') {
+      return String(value)
+    }
+  }
+
+  return null
+}
+
 /**
- * The whole task list, when a tool call carries one: `TodoWrite`'s `todos`,
- * `update_plan`'s `plan`, or any such list of entries with a status.
+ * The task list a tool call carries, when it carries one: `TodoWrite`'s
+ * `todos`, `update_plan`'s `plan`, or any such list of entries with a status.
  */
-function listOf(input: unknown): Task[] | null {
+function listOf(input: unknown): Listed | null {
   for (const field of LIST_FIELDS) {
     const entries = fieldOf(input, field)
 
@@ -109,30 +128,63 @@ function listOf(input: unknown): Task[] | null {
       continue
     }
 
-    const listed = entries.flatMap((entry: unknown, index): Task[] => {
-      const status = statusOf(fieldOf(entry, 'status'))
-      const subject = TEXT_FIELDS.map(name => textOf(fieldOf(entry, name))).find(
-        text => text !== null,
-      )
+    const read = entries.map((entry: unknown, index) => ({
+      key: keyOf(entry),
+      index,
+      status: statusOf(fieldOf(entry, 'status')),
+      subject:
+        typeof entry === 'string'
+          ? textOf(entry)
+          : (TEXT_FIELDS.map(name => textOf(fieldOf(entry, name))).find(text => text !== null) ??
+            null),
+      activeForm: textOf(fieldOf(entry, 'activeForm')),
+    }))
 
-      return status === null || subject === undefined || subject === null
-        ? []
-        : [
-            {
-              id: `item-${index}`,
-              subject,
-              status,
-              activeForm: textOf(fieldOf(entry, 'activeForm')),
-            },
-          ]
-    })
+    if (read.length > 0 && read.every(one => one.subject !== null)) {
+      return {
+        kind: 'full',
+        tasks: read.map(one => ({
+          id: one.key ?? `item-${one.index}`,
+          subject: one.subject ?? '',
+          // An entry with no status of its own has not been started.
+          status: one.status ?? 'pending',
+          activeForm: one.activeForm,
+        })),
+      }
+    }
 
-    if (listed.length > 0 || entries.length === 0) {
-      return listed
+    const patches = read.flatMap(one =>
+      one.status === null ? [] : [{ key: one.key, status: one.status }],
+    )
+
+    if (patches.length > 0) {
+      return { kind: 'patch', patches }
+    }
+
+    if (entries.length === 0) {
+      return { kind: 'full', tasks: [] }
     }
   }
 
   return null
+}
+
+/** Applies status changes to the known tasks: by id, else by position. */
+function patched(
+  tasks: readonly Task[],
+  patches: readonly { key: string | null; status: TaskStatus }[],
+): Task[] {
+  const isPositional = patches.length === tasks.length && patches.every(one => one.key === null)
+
+  return tasks.map((task, index) => {
+    const patch = isPositional
+      ? patches[index]
+      : patches.find(
+          one => one.key !== null && (one.key === task.id || `item-${one.key}` === task.id),
+        )
+
+    return patch === undefined ? task : { ...task, status: patch.status }
+  })
 }
 
 /** Reads the session's usage figures: no model request, nothing spent. */
@@ -196,6 +248,30 @@ async function refresh($: EngineInterface): Promise<Meter> {
   }
 
   return meter
+}
+
+/** What the mod did lately, newest last: for `/mission-bar debug`. */
+const trace: string[] = []
+const MAX_TRACE = 40
+
+function note(text: string): void {
+  trace.push(`${new Date().toISOString().slice(11, 19)} ${text}`)
+
+  if (trace.length > MAX_TRACE) {
+    trace.shift()
+  }
+}
+
+function short(value: unknown, most: number): string {
+  let text: string
+
+  try {
+    text = JSON.stringify(value) ?? String(value)
+  } catch {
+    text = String(value)
+  }
+
+  return text.length > most ? `${text.slice(0, most)}…` : text
 }
 
 /** Tool names seen since the mod loaded, with counts: for `/mission-bar debug`. */
@@ -274,10 +350,34 @@ async function settle($: EngineInterface, hasCompleted: boolean): Promise<void> 
 export const register: Register = on => {
   // Task calls of one model step can land together: they are applied in order.
   let queue: Promise<unknown> = Promise.resolve()
+  let busySince: number | null = null
 
-  const inOrder = <T,>(work: () => Promise<T>): Promise<T> => {
-    const result = queue.then(work, work)
-    queue = result.catch(() => undefined)
+  const inOrder = <T,>(label: string, work: () => Promise<T>): Promise<T | undefined> => {
+    // A job that never settles must not hold every later one back.
+    if (busySince !== null && Date.now() - busySince > STUCK_MS) {
+      note(`queue: dropped a job stuck for ${Date.now() - busySince}ms`)
+      queue = Promise.resolve()
+      busySince = null
+    }
+
+    const run = async (): Promise<T | undefined> => {
+      busySince = Date.now()
+
+      try {
+        const value = await work()
+        note(`${label}: applied`)
+
+        return value
+      } catch (error) {
+        note(`${label}: failed: ${short(String(error), 160)}`)
+
+        return undefined
+      } finally {
+        busySince = null
+      }
+    }
+    const result = queue.then(run, run)
+    queue = result
 
     return result
   }
@@ -327,6 +427,8 @@ export const register: Register = on => {
           `run: ${run === null ? 'none' : run.endMeter === null ? 'open' : 'finished'}`,
           `usage windows: ${meter?.fiveHour ? '5h' : 'no 5h'}, ${meter?.sevenDay ? '7d' : 'no 7d'}`,
           `tools seen since load: ${tools.join(', ') || 'none'}`,
+          'recent activity:',
+          ...(trace.length === 0 ? ['  none'] : trace.map(line => `  ${line}`)),
         ].join('\n'),
       }
     }
@@ -338,6 +440,8 @@ export const register: Register = on => {
   })
 
   on('turn.start', async ($, e, next) => {
+    note(`turn.start${e.agentId === undefined ? '' : ' (agent)'}`)
+
     if (e.agentId === undefined) {
       const meter = await refresh($)
       const hasOpen = progressOf(await read($, tasksAtom)).open > 0
@@ -351,12 +455,15 @@ export const register: Register = on => {
           : run,
       )
       await startTimer($)
+      note('turn.start: handled')
     }
 
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
+    note(`turn.complete${e.agentId === undefined ? '' : ' (agent)'}`)
+
     if (e.agentId === undefined) {
       stopTimer()
 
@@ -390,6 +497,7 @@ export const register: Register = on => {
           ? { ...run, activeMs: activeMsOf(run, meter.at), turnStartedAt: null }
           : run,
       )
+      note('turn.complete: handled')
     }
 
     return next(e)
@@ -424,12 +532,15 @@ export const register: Register = on => {
       return ran
     }
 
-    if (listed !== null) {
-      await inOrder(async () => {
-        const doneBefore = progressOf(await read($, tasksAtom)).done
+    note(`${base}: ${short(e, 320)} -> ${listed === null ? 'no list' : listed.kind}`)
 
-        await update($, tasksAtom, () => listed)
-        await settle($, progressOf(listed).done > doneBefore)
+    if (listed !== null) {
+      await inOrder(base, async () => {
+        const before = await read($, tasksAtom)
+        const after = listed.kind === 'full' ? listed.tasks : patched(before, listed.patches)
+
+        await update($, tasksAtom, () => after)
+        await settle($, progressOf(after).done > progressOf(before).done)
       })
 
       return ran
@@ -445,7 +556,7 @@ export const register: Register = on => {
         textOf(fieldOf(e, 'content'))
       const activeForm = textOf(fieldOf(e, 'activeForm'))
 
-      await inOrder(async () => {
+      await inOrder(base, async () => {
         const run = await read($, runAtom)
         const isNewRun = run === null || run.endMeter !== null
 
@@ -487,7 +598,7 @@ export const register: Register = on => {
       const subject = textOf(fieldOf(e, 'subject'))
       const activeForm = textOf(fieldOf(e, 'activeForm'))
 
-      await inOrder(async () => {
+      await inOrder(base, async () => {
         let hasCompleted = false
 
         await update($, tasksAtom, list => {

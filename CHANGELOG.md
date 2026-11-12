@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-12
+
+### Added
+
+- `/mission-bar debug` now lists the mod's recent activity: each turn event
+  and each task-list call, with what was read from it and whether it was
+  applied.
+
+### Fixed
+
+- A task-list update that never finishes no longer holds back every later
+  update.
+- Plan updates that carry statuses without the task text are applied to the
+  tasks already known.
+
 ## [0.4.0] - 2026-11-12
 
 ### Added
@@ -69,7 +84,8 @@ All notable changes to this project are documented here. The format follows
   recommendation to start a new session from 80%.
 - `/mission-bar` command and a `hide` button to show or hide the bar.
 
-[Unreleased]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.2.0...v0.2.1
