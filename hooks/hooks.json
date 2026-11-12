@@ -1,1 +1,5 @@
-{ "modules": ["./register.tsx"] }
+{
+  "description": "The mission-bar hooks module",
+  "hooks": {},
+  "modules": ["./register.tsx"]
+}

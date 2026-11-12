@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-12
+
+### Fixed
+
+- `claude plugin list` reported "Hook load failed: expected record, received
+  undefined at path hooks" on some builds. `hooks/hooks.json` now carries an
+  empty `hooks` record beside `modules`, which those builds require.
+
 ## [0.5.0] - 2026-11-12
 
 ### Fixed
@@ -106,7 +114,8 @@ All notable changes to this project are documented here. The format follows
   recommendation to start a new session from 80%.
 - `/mission-bar` command and a `hide` button to show or hide the bar.
 
-[Unreleased]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.3.0...v0.4.0
