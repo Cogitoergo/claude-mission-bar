@@ -132,3 +132,51 @@ test('a value an earlier version stored is declined', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /MISSION/ })).toBeUndefined()
   await ui.unmount()
 })
+
+test('with no task list, the bar counts by prompt', async ($, on) => {
+  let now = 1_000_000
+  let fiveHour = 20
+
+  on('clock.now', () => ({ value: now }))
+  on('clock.every', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('session.surfaces', () => ({ value: ['desktop'] }))
+  on('session.usage', () => ({
+    value: {
+      startedAt: 0,
+      context: { tokens: 20_000, window: 200_000, percent: 10 },
+      rateLimits: [
+        { kind: 'five_hour', percentUsed: fiveHour },
+        { kind: 'seven_day', percentUsed: 50 },
+      ],
+    },
+  }))
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: 'done' }))
+
+  await $.turn.start({ text: 'do it', turnId: 't1' })
+  now += 2 * MINUTE
+  fiveHour = 22
+  await $.turn.complete({
+    turnId: 't1',
+    answer: 'done',
+    durationMs: 2 * MINUTE,
+    isAborted: false,
+    reason: 'answer',
+  })
+
+  for (const surface of SURFACES) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+
+    expect((await ui.find({ type: 'Text', text: /^last prompt took/ }))?.text).toBe(
+      'last prompt took 2m',
+    )
+    expect((await ui.find({ type: 'Text', text: /^last prompt \+/ }))?.text).toBe(
+      'last prompt +2% · avg +2%',
+    )
+    expect((await ui.find({ type: 'Text', text: /prompts left/ }))?.text).toBe(
+      '≈ 39 prompts left in 5h',
+    )
+    await ui.unmount()
+  }
+})

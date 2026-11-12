@@ -37,6 +37,25 @@ export type Run = {
   endMeter: Meter | null
 }
 
+/** One prompt of the person's, from its turn's start to its end. */
+export type Prompt = {
+  startedAt: number
+  /** The reading the turn started from. */
+  baseline: Meter
+  /** The reading when the turn ended; null while it runs. */
+  endMeter: Meter | null
+}
+
+/** Totals over the session's finished prompts: what an average is taken from. */
+export type Pace = {
+  prompts: number
+  /** Percentage points the prompts added to the 5-hour window, summed. */
+  fiveHour: number
+  /** Percentage points the prompts added to the 7-day window, summed. */
+  sevenDay: number
+  activeMs: number
+}
+
 /** The prompt-cache split of the last finished turn, in tokens. */
 export type Cache = { read: number; written: number; fresh: number }
 
@@ -47,6 +66,8 @@ declare module 'claude-code' {
       run: Shaped<Run | null>
       meter: Shaped<Meter | null>
       cache: Shaped<Cache | null>
+      prompt: Shaped<Prompt | null>
+      pace: Shaped<Pace>
       isHidden: boolean
       warned: number
       /** The terminal animation's frame counter, advanced while a turn runs. */

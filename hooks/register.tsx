@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
-import type { Cache, Limit, Meter, Run, Task, TaskStatus } from '../types'
+import type { Cache, Limit, Meter, Pace, Prompt, Run, Task, TaskStatus } from '../types'
 import {
   CACHE_POOR,
   CONTEXT_NOTE,
@@ -13,7 +13,9 @@ import {
   etaMsOf,
   formatDuration,
   formatPercent,
+  gainOf,
   progressOf,
+  promptSpendOf,
   spendOf,
 } from './estimate'
 import type { Spend } from './estimate'
@@ -51,6 +53,13 @@ const meterAtom = atom({ plugin: 'mission-bar', key: 'meter' } as const, null, {
 })
 const cacheAtom = atom({ plugin: 'mission-bar', key: 'cache' } as const, null, {
   shape: 'cache-1',
+})
+const promptAtom = atom({ plugin: 'mission-bar', key: 'prompt' } as const, null, {
+  shape: 'prompt-1',
+})
+const NO_PACE: Pace = { prompts: 0, fiveHour: 0, sevenDay: 0, activeMs: 0 }
+const paceAtom = atom({ plugin: 'mission-bar', key: 'pace' } as const, NO_PACE, {
+  shape: 'pace-1',
 })
 const isHiddenAtom = atom({ plugin: 'mission-bar', key: 'isHidden' } as const, false)
 const warnedAtom = atom({ plugin: 'mission-bar', key: 'warned' } as const, 0)
@@ -232,6 +241,8 @@ export const register: Register = on => {
       await update($, tasksAtom, () => [])
       await update($, runAtom, () => null)
       await update($, cacheAtom, () => null)
+      await update($, promptAtom, () => null)
+      await update($, paceAtom, () => NO_PACE)
       await update($, warnedAtom, () => 0)
     }
 
@@ -249,6 +260,9 @@ export const register: Register = on => {
     if (e.agentId === undefined) {
       const meter = await refresh($)
       const hasOpen = progressOf(await read($, tasksAtom)).open > 0
+      const prompt: Prompt = { startedAt: meter.at, baseline: meter, endMeter: null }
+
+      await update($, promptAtom, () => prompt)
 
       await update($, runAtom, run =>
         run !== null && run.endMeter === null && hasOpen && run.turnStartedAt === null
@@ -277,6 +291,18 @@ export const register: Register = on => {
       }
 
       const meter = await refresh($)
+
+      const prompt = await read($, promptAtom)
+
+      if (prompt !== null && prompt.endMeter === null) {
+        await update($, promptAtom, () => ({ ...prompt, endMeter: meter }))
+        await update($, paceAtom, pace => ({
+          prompts: pace.prompts + 1,
+          fiveHour: pace.fiveHour + (gainOf(one => one.fiveHour, prompt.baseline, meter) ?? 0),
+          sevenDay: pace.sevenDay + (gainOf(one => one.sevenDay, prompt.baseline, meter) ?? 0),
+          activeMs: pace.activeMs + Math.max(0, meter.at - prompt.startedAt),
+        }))
+      }
 
       await update($, runAtom, run =>
         run !== null && run.turnStartedAt !== null
@@ -412,10 +438,12 @@ export const register: Register = on => {
       return next(e)
     }
 
-    const [tasks, run, cache] = await Promise.all([
+    const [tasks, run, cache, prompt, pace] = await Promise.all([
       read($, tasksAtom),
       read($, runAtom),
       read($, cacheAtom),
+      read($, promptAtom),
+      read($, paceAtom),
     ])
 
     // What the bar says, the same on every surface; how it is drawn follows.
@@ -438,12 +466,44 @@ export const register: Register = on => {
 
     type Gauge = { key: string; label: string; percent: number; value: string; detail: string | null; color: string }
 
-    const spendGauge = (key: string, label: string, spend: Spend | null): Gauge[] => {
+    // With no task list, a prompt is the unit: what this one cost, what one
+    // costs on average, and how many more the 5-hour window has room for.
+    const fivePrompt = promptSpendOf(one => one.fiveHour, pace.fiveHour, prompt, pace, meter)
+    const weekPrompt = promptSpendOf(one => one.sevenDay, pace.sevenDay, prompt, pace, meter)
+    const promptMs =
+      prompt === null ? null : Math.max(0, (prompt.endMeter ?? meter).at - prompt.startedAt)
+    const idleText =
+      prompt === null || promptMs === null
+        ? 'waiting for the first prompt'
+        : prompt.endMeter === null
+          ? `working ${formatDuration(promptMs)}`
+          : `last prompt took ${formatDuration(promptMs)}`
+    const leftText =
+      fivePrompt.left === null ? null : `≈ ${fivePrompt.left} prompts left in 5h`
+
+    const spendGauge = (
+      key: string,
+      label: string,
+      spend: Spend | null,
+      perPrompt: typeof fivePrompt,
+    ): Gauge[] => {
       if (spend === null) {
         return []
       }
 
       const parts: string[] = []
+
+      if (!hasRun) {
+        if (perPrompt.prompt !== null) {
+          parts.push(
+            `${perPrompt.isRunning ? 'this' : 'last'} prompt +${formatPercent(perPrompt.prompt)}%`,
+          )
+        }
+
+        if (perPrompt.average !== null) {
+          parts.push(`avg +${formatPercent(perPrompt.average)}%`)
+        }
+      }
 
       if (hasRun) {
         parts.push(`tasks +${formatPercent(spend.spent)}%`)
@@ -466,8 +526,8 @@ export const register: Register = on => {
     }
 
     const gauges: Gauge[] = [
-      ...spendGauge('five', '5h', spendOf(one => one.fiveHour, hasRun ? run : null, meter, etaMs)),
-      ...spendGauge('week', '7d', spendOf(one => one.sevenDay, hasRun ? run : null, meter, etaMs)),
+      ...spendGauge('five', '5h', spendOf(one => one.fiveHour, hasRun ? run : null, meter, etaMs), fivePrompt),
+      ...spendGauge('week', '7d', spendOf(one => one.sevenDay, hasRun ? run : null, meter, etaMs), weekPrompt),
     ]
     const costNow = (run?.endMeter ?? meter).costUsd
     const costBase = run?.baseline.costUsd ?? null
@@ -543,7 +603,10 @@ export const register: Register = on => {
                   {isDone || isNarrow ? null : <Text dimColor>elapsed {elapsed}</Text>}
                 </Box>
               ) : (
-                <Text dimColor>no tasks tracked yet</Text>
+                <Box flexDirection="row" gap={1}>
+                  <Text weight="bold">{idleText}</Text>
+                  {leftText === null ? null : <Text color={PALETTE.info}>{leftText}</Text>}
+                </Box>
               )}
             </Box>
             <Button key="hide" label="hide" plain dimColor onPress={hide} />
@@ -631,7 +694,12 @@ export const register: Register = on => {
                 {count}
               </Text>
             ) : (
-              <Text dimColor>no tasks tracked yet</Text>
+              <Text weight="semibold">{idleText}</Text>
+            )}
+            {hasRun || leftText === null ? null : (
+              <Text color={PALETTE.info} weight="semibold" tabular>
+                {leftText}
+              </Text>
             )}
             {!hasRun ? null : isDone ? (
               <Text color={PALETTE.good} size="heading" weight="semibold">

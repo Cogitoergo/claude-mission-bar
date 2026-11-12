@@ -1,6 +1,6 @@
 {
   "name": "mission-bar",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "A bar above the prompt: task progress, a live ETA, 5-hour and weekly usage spent and projected, and context and cache health.",
   "author": { "name": "Cogitoergo", "url": "https://github.com/Cogitoergo" },
   "homepage": "https://github.com/Cogitoergo/claude-mission-bar",

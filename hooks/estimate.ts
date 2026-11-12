@@ -1,4 +1,4 @@
-import type { Cache, Limit, Meter, Run, Task } from '../types'
+import type { Cache, Limit, Meter, Pace, Prompt, Run, Task } from '../types'
 
 /** Context fill, in percent, at which the bar first mentions it. */
 export const CONTEXT_NOTE = 60
@@ -87,6 +87,57 @@ export function spendOf(
   const toGo = etaMs === null || active <= 0 ? null : (spent / active) * etaMs
 
   return { used: now.percentUsed, spent, toGo }
+}
+
+/** Points a window gained between two readings; null if either has none. */
+export function gainOf(
+  pick: (meter: Meter) => Limit | null,
+  from: Meter,
+  to: Meter,
+): number | null {
+  const before = pick(from)
+  const after = pick(to)
+
+  if (before === null || after === null) {
+    return null
+  }
+
+  // A window that reset in between counts from zero.
+  return after.percentUsed < before.percentUsed
+    ? after.percentUsed
+    : after.percentUsed - before.percentUsed
+}
+
+export type PromptSpend = {
+  /** Points the running or last prompt added; null with no prompt yet. */
+  prompt: number | null
+  isRunning: boolean
+  /** Average points per finished prompt; null before one has finished. */
+  average: number | null
+  /** Prompts the window has room for at that average; null if unknown. */
+  left: number | null
+}
+
+/** What prompts cost a window, when there is no task list to count by. */
+export function promptSpendOf(
+  pick: (meter: Meter) => Limit | null,
+  total: number,
+  prompt: Prompt | null,
+  pace: Pace,
+  meter: Meter,
+): PromptSpend {
+  const used = pick(meter)?.percentUsed ?? null
+  const average = pace.prompts > 0 ? total / pace.prompts : null
+
+  return {
+    prompt: prompt === null ? null : gainOf(pick, prompt.baseline, prompt.endMeter ?? meter),
+    isRunning: prompt !== null && prompt.endMeter === null,
+    average,
+    left:
+      average !== null && average > 0 && used !== null
+        ? Math.max(0, Math.floor((100 - used) / average))
+        : null,
+  }
 }
 
 /** Share of the last turn's prompt the cache served, 0 to 100; null if empty. */

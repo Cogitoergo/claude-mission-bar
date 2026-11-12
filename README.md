@@ -52,8 +52,12 @@ Details worth knowing:
   pace to go by, and the bar says so instead of guessing.
 - **The ETA counts working time**, not time spent waiting for you, and
   refreshes every 15 seconds while a turn runs.
-- **Tasks are only tracked when Claude keeps a task list.** Without one the
-  bar shows usage and context alone.
+- **Tasks are only tracked when Claude keeps a task list**, which it does for
+  multi-step work, or when you ask it to ("use your task list"). Steps Claude
+  simply carries out one after another are not tasks the bar can see.
+- **Without a task list the bar counts by prompt**: how long the running or
+  last prompt took, the points it added to each window, the average per
+  prompt, and roughly how many more prompts the 5-hour window has room for.
 - **Without rate-limit readings** (an API key rather than a subscription, for
   example) the bar shows the session's cost in dollars instead.
 - **A window that resets mid-run** is counted from zero from that point.

@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-12
+
+### Added
+
+- The bar now works without a task list. When Claude keeps none, it counts by
+  prompt: how long the running or last prompt took, the points it added to
+  the 5-hour and 7-day windows, the average per prompt, and roughly how many
+  more prompts the 5-hour window has room for.
+
 ## [0.2.1] - 2026-11-12
 
 ### Changed
@@ -46,7 +55,8 @@ All notable changes to this project are documented here. The format follows
   recommendation to start a new session from 80%.
 - `/mission-bar` command and a `hide` button to show or hide the bar.
 
-[Unreleased]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Cogitoergo/claude-mission-bar/releases/tag/v0.1.0
