@@ -1,0 +1,82 @@
+name: Release
+
+# Publishes a GitHub release when the version in plugin.json has no tag yet.
+# To release: bump `version` in .claude-plugin/plugin.json, move the
+# Unreleased notes in CHANGELOG.md under the new version, and merge.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .claude-plugin/plugin.json
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Tag and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Read the version
+        id: version
+        run: |
+          version="$(node -p "require('./.claude-plugin/plugin.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install Claude Code
+        if: steps.version.outputs.exists == 'false'
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Validate and test before releasing
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          claude plugin validate .
+          claude plugin test .
+      - name: Extract the release notes
+        if: steps.version.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          awk -v v="$VERSION" '
+            /^## \[/ { on = index($0, "## [" v "]") == 1; next }
+            /^\[[^]]+\]: / { on = 0 }
+            on
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "CHANGELOG.md has no notes for $VERSION" >&2
+            exit 1
+          fi
+          {
+            echo
+            echo '### Install'
+            echo
+            echo '```'
+            echo "/plugin install mission-bar --marketplace $GITHUB_REPOSITORY"
+            echo '```'
+          } >> notes.md
+      - name: Publish the release
+        if: steps.version.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "v$VERSION" \
+            --target "$GITHUB_SHA" \
+            --title "mission-bar $VERSION" \
+            --notes-file notes.md

@@ -1,0 +1,14 @@
+{
+  "name": "claude-mission-bar",
+  "owner": { "name": "Cogitoergo", "url": "https://github.com/Cogitoergo" },
+  "metadata": {
+    "description": "Mission bar: task progress, ETA, usage and context health above the Claude Code prompt."
+  },
+  "plugins": [
+    {
+      "name": "mission-bar",
+      "source": "./",
+      "description": "A bar above the prompt: task progress, a live ETA, 5-hour and weekly usage spent and projected, and context and cache health."
+    }
+  ]
+}
