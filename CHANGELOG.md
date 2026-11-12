@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-12
+
+### Changed
+
+- The README now describes what each hook does.
+- The icon is a smaller, flat-colour PNG.
+
 ## [0.2.0] - 2026-11-12
 
 ### Changed
@@ -39,6 +46,7 @@ All notable changes to this project are documented here. The format follows
   recommendation to start a new session from 80%.
 - `/mission-bar` command and a `hide` button to show or hide the bar.
 
-[Unreleased]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Cogitoergo/claude-mission-bar/releases/tag/v0.1.0
