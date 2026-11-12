@@ -68,6 +68,23 @@ Details worth knowing:
 
 The thresholds are constants at the top of [`hooks/estimate.ts`](hooks/estimate.ts).
 
+## What the mod hooks
+
+Every hook observes and passes the event on unchanged. None blocks, rewrites
+or delays anything Claude does.
+
+| Hook | What it does |
+| --- | --- |
+| `tool.call` for `TaskCreate`, `TaskUpdate`, `TodoWrite` | Lets the call run, then records the task's name and status for the bar. The call and its result are returned untouched. |
+| `turn.start`, `turn.complete` | Starts and stops the working-time clock and the refresh timer, and reads the turn's cache token counts. |
+| `session.start` | Registers the `/mission-bar` command and takes a first usage reading. |
+| `session.end` | Stops the timers, and clears the tracked tasks on `/clear`. |
+| `command.run` for `/mission-bar` | Shows or hides the bar. This is the only command the mod adds; it adds no tools or agents. |
+| `ui.render` for the band above the prompt | Draws the bar. |
+
+The mod makes no network or model requests, runs no processes, and reads or
+writes no files.
+
 ## Install
 
 At the prompt of a terminal session:
