@@ -75,10 +75,17 @@ test('progress, ETA, usage and context advice, on every surface', async ($, on) 
 
     expect((await ui.find({ type: 'Text', text: /^1\/3$/ }))?.text).toBe('1/3')
     expect((await ui.find({ type: 'Text', text: /^ETA/ }))?.text).toBe('ETA ~20m')
-    expect((await ui.find({ type: 'Text', text: /^24%$/ }))?.text).toBe('24%')
-    expect((await ui.find({ type: 'Text', text: /to go/ }))?.text).toBe(
-      'tasks +4% · ~+8% to go',
-    )
+    if (surface === 'terminal') {
+      expect((await ui.find({ type: 'Text', text: /^24%$/ }))?.text).toBe('24%')
+      expect((await ui.find({ type: 'Text', text: /to go/ }))?.text).toBe(
+        'tasks +4% · ~+8% to go',
+      )
+    } else {
+      // On the apps each gauge is one drawing, described by its alt text.
+      const drawn = JSON.stringify(await ui.drawn())
+
+      expect(drawn).toContain('5h 24% tasks +4% · ~+8% to go')
+    }
     expect(await ui.find({ type: 'Text', text: /Step 2/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /new session/ })).toBeDefined()
     await ui.unmount()
@@ -171,9 +178,7 @@ test('with no task list, the bar counts by prompt', async ($, on) => {
     expect((await ui.find({ type: 'Text', text: /^last prompt took/ }))?.text).toBe(
       'last prompt took 2m',
     )
-    expect((await ui.find({ type: 'Text', text: /^last prompt \+/ }))?.text).toBe(
-      'last prompt +2% · avg +2%',
-    )
+    expect(JSON.stringify(await ui.drawn())).toContain('last prompt +2% · avg +2%')
     expect((await ui.find({ type: 'Text', text: /prompts left/ }))?.text).toBe(
       '≈ 39 prompts left in 5h',
     )
@@ -215,4 +220,45 @@ test('a whole-list tool such as update_plan is followed', async ($, on) => {
 
   expect((await later.find({ type: 'Text', text: /^2\/3$/ }))?.text).toBe('2/3')
   await later.unmount()
+
+  // The desktop app's `advance`: the task in progress is done, the next begins.
+  await $.tool.call({ tool: 'update_plan', advance: true } as never)
+
+  const done = await $.ui.mount({ ...BAND, surface: 'desktop' })
+
+  expect((await done.find({ type: 'Text', text: /all done/ }))?.text).toMatch(/all done/)
+  await done.unmount()
+})
+
+test('advance walks the plan, and wrap_up finishes the last task', async ($, on) => {
+  on('clock.now', () => ({ value: 1_000_000 }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('session.usage', () => ({
+    value: { startedAt: 0, context: { window: 200_000, percent: 10 }, rateLimits: [] },
+  }))
+  on('tool.call', () => ({ result: {} }))
+
+  await $.tool.call({
+    tool: 'mcp__ccd_turn__update_plan',
+    items: [
+      { content: 'One', status: 'in_progress' },
+      { content: 'Two', status: 'pending' },
+      { content: 'Three', status: 'pending' },
+    ],
+  } as never)
+  await $.tool.call({ tool: 'mcp__ccd_turn__update_plan', advance: true } as never)
+  await $.tool.call({ tool: 'mcp__ccd_turn__update_plan', advance: true } as never)
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+
+  expect((await ui.find({ type: 'Text', text: /^2\/3$/ }))?.text).toBe('2/3')
+  expect(await ui.find({ type: 'Text', text: /Three/ })).toBeDefined()
+  await ui.unmount()
+
+  await $.tool.call({ tool: 'mcp__ccd_turn__wrap_up' } as never)
+
+  const done = await $.ui.mount({ ...BAND, surface: 'desktop' })
+
+  expect((await done.find({ type: 'Text', text: /all done/ }))?.text).toMatch(/all done/)
+  await done.unmount()
 })

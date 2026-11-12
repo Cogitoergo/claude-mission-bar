@@ -4,6 +4,7 @@ import type { EngineInterface, Register, Timer } from 'claude-code'
 import type { Cache, Limit, Meter, Pace, Prompt, Run, Task, TaskStatus } from '../types'
 import {
   CACHE_POOR,
+  IDLE_MAX_MS,
   CONTEXT_NOTE,
   CONTEXT_SWITCH,
   activeMsOf,
@@ -22,7 +23,9 @@ import type { Spend } from './estimate'
 import {
   PALETTE,
   SPINNER,
+  chipSvg,
   gradientCells,
+  mascotSvg,
   levelColor,
   logoSvg,
   meterCells,
@@ -34,7 +37,7 @@ import {
 
 const PLUGIN = 'mission-bar'
 /** How often the bar re-reads the usage figures while a turn runs. */
-const TICK_MS = 15_000
+const TICK_MS = 5_000
 /** How often the terminal's animation advances while a turn runs. */
 const FRAME_MS = 250
 /** Task rows the bar lists before folding the rest into a count. */
@@ -48,7 +51,7 @@ const tasksAtom = atom({ plugin: 'mission-bar', key: 'tasks' } as const, [], {
   shape: 'tasks-1',
 })
 const runAtom = atom({ plugin: 'mission-bar', key: 'run' } as const, null, {
-  shape: 'run-1',
+  shape: 'run-2',
 })
 const meterAtom = atom({ plugin: 'mission-bar', key: 'meter' } as const, null, {
   shape: 'meter-1',
@@ -187,6 +190,28 @@ function patched(
   })
 }
 
+/** `update_plan`'s `advance`: the task in progress is done, the next begins. */
+function advanced(tasks: readonly Task[]): Task[] {
+  const current = tasks.findIndex(task => task.status === 'in_progress')
+  const list = tasks.map((task, index): Task =>
+    index === current ? { ...task, status: 'completed' } : task,
+  )
+  const following = list.findIndex(task => task.status === 'pending')
+
+  return list.map((task, index): Task =>
+    index === following ? { ...task, status: 'in_progress' } : task,
+  )
+}
+
+/** The plan wrapped up: a last task still in progress, with none to follow, is done. */
+function wrappedUp(tasks: readonly Task[]): Task[] {
+  return tasks.some(task => task.status === 'pending')
+    ? [...tasks]
+    : tasks.map((task): Task =>
+        task.status === 'in_progress' ? { ...task, status: 'completed' } : task,
+      )
+}
+
 /** Reads the session's usage figures: no model request, nothing spent. */
 async function measure($: EngineInterface): Promise<Meter> {
   const [usage, at] = await Promise.all([$.session.usage(), $.clock.now()])
@@ -279,6 +304,8 @@ const seenTools = new Map<string, number>()
 const MAX_SEEN_TOOLS = 40
 
 let timer: Timer | null = null
+/** When the last turn ended; null while a turn runs. */
+let idleSince: number | null = null
 let frameTimer: Timer | null = null
 // Each start and stop takes a new number, so a start that was still waiting
 // when a stop came sets no timer.
@@ -298,6 +325,14 @@ async function startTimer($: EngineInterface): Promise<void> {
   const mine = timerRun
 
   timer = $.clock.every(TICK_MS, () => {
+    // Between turns the clock keeps running for a while (background work),
+    // then stops: nobody is waiting on a bar that cannot change.
+    if (idleSince !== null && Date.now() - idleSince > IDLE_MAX_MS) {
+      stopTimer()
+
+      return
+    }
+
     void refresh($).catch(() => undefined)
   })
 
@@ -329,6 +364,7 @@ async function settle($: EngineInterface, hasCompleted: boolean): Promise<void> 
         activeMs: 0,
         activeAtLastDone: 0,
         turnStartedAt: meter.at,
+        turnEndedAt: null,
         baseline: meter,
         endMeter: null,
       }
@@ -342,7 +378,7 @@ async function settle($: EngineInterface, hasCompleted: boolean): Promise<void> 
     const next = hasCompleted ? { ...run, activeAtLastDone: active } : run
 
     return open === 0
-      ? { ...next, activeMs: active, turnStartedAt: null, endMeter: meter }
+      ? { ...next, activeMs: active, turnStartedAt: null, turnEndedAt: null, endMeter: meter }
       : next
   })
 }
@@ -449,11 +485,20 @@ export const register: Register = on => {
 
       await update($, promptAtom, () => prompt)
 
-      await update($, runAtom, run =>
-        run !== null && run.endMeter === null && hasOpen && run.turnStartedAt === null
-          ? { ...run, turnStartedAt: meter.at }
-          : run,
-      )
+      await update($, runAtom, run => {
+        if (run === null || run.endMeter !== null || !hasOpen || run.turnStartedAt !== null) {
+          return run
+        }
+
+        // The pause since the last turn counts when it was short.
+        return {
+          ...run,
+          activeMs: activeMsOf(run, meter.at),
+          turnStartedAt: meter.at,
+          turnEndedAt: null,
+        }
+      })
+      idleSince = null
       await startTimer($)
       note('turn.start: handled')
     }
@@ -494,9 +539,23 @@ export const register: Register = on => {
 
       await update($, runAtom, run =>
         run !== null && run.turnStartedAt !== null
-          ? { ...run, activeMs: activeMsOf(run, meter.at), turnStartedAt: null }
+          ? {
+              ...run,
+              activeMs: activeMsOf(run, meter.at),
+              turnStartedAt: null,
+              turnEndedAt: meter.at,
+            }
           : run,
       )
+
+      // With tasks still open the bar keeps counting through the pause.
+      const after = await read($, runAtom)
+
+      if (after !== null && after.endMeter === null) {
+        idleSince = Date.now()
+        await startTimer($)
+      }
+
       note('turn.complete: handled')
     }
 
@@ -527,6 +586,27 @@ export const register: Register = on => {
       fieldOf(ran.result, 'success') === false
     const isTaskish = /task|todo|plan/i.test(base)
     const listed = isTaskish || fieldOf(e, 'todos') !== undefined ? listOf(e) : null
+
+    const isWrapUp = /^wrap_?up$/i.test(base)
+    const isAdvance = isTaskish && listed === null && fieldOf(e, 'advance') === true
+
+    if (!hasFailed && (isWrapUp || isAdvance)) {
+      note(`${base}: ${isWrapUp ? 'wrap up' : 'advance'}`)
+      await inOrder(base, async () => {
+        const before = await read($, tasksAtom)
+
+        if (before.length === 0) {
+          return
+        }
+
+        const after = isWrapUp ? wrappedUp(before) : advanced(before)
+
+        await update($, tasksAtom, () => after)
+        await settle($, progressOf(after).done > progressOf(before).done)
+      })
+
+      return ran
+    }
 
     if (hasFailed || !(isTaskish || listed !== null)) {
       return ran
@@ -869,6 +949,7 @@ export const register: Register = on => {
     // The graphical surfaces: vector drawings beside native text, so the
     // words follow the app's theme and the animation costs no redraws.
     const { Box, Button, Svg, Text } = $.ui.resolve(e)
+    const mood = isDone ? 'landed' : e.props.isWorking ? 'flying' : 'parked'
     const barWidth = Math.max(120, Math.min(280, columns * 3))
 
     return (
@@ -882,7 +963,7 @@ export const register: Register = on => {
       >
         <Box flexDirection="row" justifyContent="space-between" alignItems="center">
           <Box flexDirection="row" gap="sm" alignItems="center" flexWrap="wrap">
-            <Svg source={logoSvg(16)} alt="" width={16} height={16} />
+            <Svg source={logoSvg(16)} alt="Mission bar" width={16} height={16} />
             <Text color={PALETTE.accent} size="caption" weight="bold">
               MISSION
             </Text>
@@ -922,7 +1003,16 @@ export const register: Register = on => {
               </Text>
             )}
           </Box>
-          <Button key="hide" label="hide" plain dimColor onPress={hide} />
+          <Box flexDirection="row" gap="sm" alignItems="center">
+            <Svg
+              source={mascotSvg(mood, 30)}
+              alt={mood === 'flying' ? 'Working' : mood === 'landed' ? 'All done' : 'Idle'}
+              width={30}
+              height={30}
+              isInteractive={mood !== 'landed'}
+            />
+            <Button key="hide" label="hide" plain dimColor onPress={hide} />
+          </Box>
         </Box>
 
         {isDone || shown.length === 0 ? null : (
@@ -958,34 +1048,19 @@ export const register: Register = on => {
           </Box>
         )}
 
-        <Box flexDirection="row" flexWrap="wrap" gap="sm">
-          {gauges.map(gauge => (
-            <Box
-              flexDirection="row"
-              gap="xs"
-              alignItems="center"
-              backgroundColor={PALETTE.chip}
-              paddingX="sm"
-            >
+        <Box flexDirection="row" flexWrap="wrap" gap="sm" alignItems="center">
+          {gauges.map(gauge => {
+            const chip = chipSvg(gauge)
+
+            return (
               <Svg
-                source={ringSvg(18, gauge.percent, gauge.color)}
-                alt={`${gauge.label} ${gauge.value}`}
-                width={18}
-                height={18}
+                source={chip.source}
+                alt={[gauge.label, gauge.value, gauge.detail].filter(Boolean).join(' ')}
+                width={chip.width}
+                height={chip.height}
               />
-              <Text size="caption" weight="semibold">
-                {gauge.label}
-              </Text>
-              <Text color={gauge.color} weight="bold" tabular>
-                {gauge.value}
-              </Text>
-              {gauge.detail === null ? null : (
-                <Text dimColor size="caption" tabular>
-                  {gauge.detail}
-                </Text>
-              )}
-            </Box>
-          ))}
+            )
+          })}
           {cost === null ? null : <Text tabular>{cost}</Text>}
         </Box>
 

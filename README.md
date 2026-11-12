@@ -50,8 +50,10 @@ Details worth knowing:
 
 - **The ETA appears after the first task completes.** Before that there is no
   pace to go by, and the bar says so instead of guessing.
-- **The ETA counts working time**, not time spent waiting for you, and
-  refreshes every 15 seconds while a turn runs.
+- **The ETA counts real time while work is under way**, including short
+  pauses between turns such as a background command, and refreshes every 5
+  seconds. A pause of more than ten minutes is taken as you being away and is
+  not counted.
 - **Tasks are only tracked when Claude keeps a task list**, which it does for
   multi-step work, or when you ask it to ("use your task list"). Steps Claude
   simply carries out one after another are not tasks the bar can see.
@@ -128,7 +130,7 @@ Then run `/reload-plugins` in a running session, or start a new one.
 
 ## Compatibility
 
-Built and tested on Claude Code 2.1.322, on the terminal, desktop, VS Code and
+Built and tested on Claude Code 2.1.321 and 2.1.322, on the terminal, desktop, VS Code and
 mobile surfaces. The plugin API the mod uses is early access and can change
 between Claude Code releases; if the bar stops drawing after an update, please
 [open an issue](https://github.com/Cogitoergo/claude-mission-bar/issues).

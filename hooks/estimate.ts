@@ -25,11 +25,22 @@ export function progressOf(tasks: readonly Task[]): Progress {
   return { total: tasks.length, done, open: tasks.length - done, current, pending }
 }
 
-/** Working time of the run so far: finished turns plus the running one. */
-export function activeMsOf(run: Run, now: number): number {
-  const running = run.turnStartedAt === null ? 0 : Math.max(0, now - run.turnStartedAt)
+/** A pause between turns longer than this is the person away, not work. */
+export const IDLE_MAX_MS = 10 * 60_000
 
-  return run.activeMs + running
+/**
+ * Time the run has taken so far: finished turns, the running one, and short
+ * pauses between turns, which are background work (a build, a wait) and not
+ * the person being away.
+ */
+export function activeMsOf(run: Run, now: number): number {
+  if (run.turnStartedAt !== null) {
+    return run.activeMs + Math.max(0, now - run.turnStartedAt)
+  }
+
+  const paused = run.turnEndedAt === null ? 0 : Math.max(0, now - run.turnEndedAt)
+
+  return run.endMeter === null && paused < IDLE_MAX_MS ? run.activeMs + paused : run.activeMs
 }
 
 /**

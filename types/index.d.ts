@@ -31,6 +31,8 @@ export type Run = {
   activeAtLastDone: number
   /** When the running turn began; null between turns. */
   turnStartedAt: number | null
+  /** When the last turn ended; null during a turn or before the first ends. */
+  turnEndedAt: number | null
   /** The reading the run started from: what "spent on this task" counts from. */
   baseline: Meter
   /** The reading when the last task completed; null while tasks are open. */

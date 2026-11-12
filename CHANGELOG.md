@@ -6,6 +6,28 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-12
+
+### Fixed
+
+- The desktop app's task list is now followed to the end. After its first
+  call the app sends `update_plan` with only `advance: true`, meaning "the
+  current task is done, start the next", which the bar ignored; it stayed on
+  0 of N. `wrap_up` now completes the last task.
+- Elapsed time and the ETA count real time through short pauses between
+  turns, such as a background command, and refresh every 5 seconds. A pause
+  of more than ten minutes is taken as the person being away and not counted.
+
+### Changed
+
+- In the apps each gauge is drawn as one rounded pill, so its shape and
+  spacing no longer depend on how the app paints boxes.
+
+### Added
+
+- A rocket mascot at the right of the bar: flying with a flickering flame
+  while Claude works, parked when idle, and ticked when every task is done.
+
 ## [0.4.1] - 2026-11-12
 
 ### Added
@@ -84,7 +106,8 @@ All notable changes to this project are documented here. The format follows
   recommendation to start a new session from 80%.
 - `/mission-bar` command and a `hide` button to show or hide the bar.
 
-[Unreleased]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Cogitoergo/claude-mission-bar/compare/v0.2.1...v0.3.0
