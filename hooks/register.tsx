@@ -76,9 +76,63 @@ function textOf(value: unknown): string | null {
 }
 
 function statusOf(value: unknown): TaskStatus | null {
-  return value === 'pending' || value === 'in_progress' || value === 'completed'
-    ? value
-    : null
+  if (typeof value !== 'string') {
+    return null
+  }
+
+  // Builds and apps spell the three states differently.
+  const word = value.toLowerCase().replace(/[\s-]+/g, '_')
+
+  if (['pending', 'todo', 'not_started', 'open', 'queued'].includes(word)) {
+    return 'pending'
+  }
+
+  if (['in_progress', 'active', 'running', 'doing', 'started'].includes(word)) {
+    return 'in_progress'
+  }
+
+  return ['completed', 'complete', 'done', 'finished'].includes(word) ? 'completed' : null
+}
+
+const LIST_FIELDS = ['todos', 'plan', 'steps', 'tasks', 'items']
+const TEXT_FIELDS = ['content', 'subject', 'step', 'title', 'text', 'name', 'description']
+
+/**
+ * The whole task list, when a tool call carries one: `TodoWrite`'s `todos`,
+ * `update_plan`'s `plan`, or any such list of entries with a status.
+ */
+function listOf(input: unknown): Task[] | null {
+  for (const field of LIST_FIELDS) {
+    const entries = fieldOf(input, field)
+
+    if (!Array.isArray(entries)) {
+      continue
+    }
+
+    const listed = entries.flatMap((entry: unknown, index): Task[] => {
+      const status = statusOf(fieldOf(entry, 'status'))
+      const subject = TEXT_FIELDS.map(name => textOf(fieldOf(entry, name))).find(
+        text => text !== null,
+      )
+
+      return status === null || subject === undefined || subject === null
+        ? []
+        : [
+            {
+              id: `item-${index}`,
+              subject,
+              status,
+              activeForm: textOf(fieldOf(entry, 'activeForm')),
+            },
+          ]
+    })
+
+    if (listed.length > 0 || entries.length === 0) {
+      return listed
+    }
+  }
+
+  return null
 }
 
 /** Reads the session's usage figures: no model request, nothing spent. */
@@ -143,6 +197,10 @@ async function refresh($: EngineInterface): Promise<Meter> {
 
   return meter
 }
+
+/** Tool names seen since the mod loaded, with counts: for `/mission-bar debug`. */
+const seenTools = new Map<string, number>()
+const MAX_SEEN_TOOLS = 40
 
 let timer: Timer | null = null
 let frameTimer: Timer | null = null
@@ -227,7 +285,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: PLUGIN,
-      description: 'Show or hide the mission bar above the prompt',
+      description: 'Show or hide the mission bar; "debug" prints diagnostics',
     })
     await refresh($)
 
@@ -249,7 +307,30 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: PLUGIN }, async $ => {
+  on('command.run', { command: PLUGIN }, async ($, e) => {
+    if (e.args.trim() === 'debug') {
+      const [version, surfaces, tasks, run, meter] = await Promise.all([
+        $.session.version(),
+        $.session.surfaces(),
+        read($, tasksAtom),
+        read($, runAtom),
+        read($, meterAtom),
+      ])
+      const tools = [...seenTools].map(([tool, count]) => `${tool} x${count}`)
+
+      return {
+        text: [
+          'mission-bar diagnostics',
+          `Claude Code: ${version.version}`,
+          `surfaces: ${surfaces.join(', ') || 'none'}`,
+          `tasks tracked: ${tasks.length} (${tasks.map(task => task.status).join(', ') || 'none'})`,
+          `run: ${run === null ? 'none' : run.endMeter === null ? 'open' : 'finished'}`,
+          `usage windows: ${meter?.fiveHour ? '5h' : 'no 5h'}, ${meter?.sevenDay ? '7d' : 'no 7d'}`,
+          `tools seen since load: ${tools.join(', ') || 'none'}`,
+        ].join('\n'),
+      }
+    }
+
     const isHidden = !(await read($, isHiddenAtom))
     await update($, isHiddenAtom, () => isHidden)
 
@@ -314,115 +395,129 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('tool.call', { tool: 'TaskCreate' }, async ($, e, next) => {
+  // One hook sees every tool call, lets it run untouched, and records the
+  // ones that change the task list. Names are matched loosely, so a build
+  // that spells its task tools differently is still followed.
+  on('tool.call', async ($, e, next) => {
     const ran = await next(e)
-    const task = fieldOf(ran.result, 'task')
-    const id = textOf(fieldOf(task, 'id'))
+    const name = String(e.tool)
+    const base = name.split('__').pop() ?? name
 
-    if (id === null) {
+    seenTools.set(name, (seenTools.get(name) ?? 0) + 1)
+
+    if (seenTools.size > MAX_SEEN_TOOLS) {
+      const oldest = seenTools.keys().next().value
+
+      if (oldest !== undefined) {
+        seenTools.delete(oldest)
+      }
+    }
+
+    const hasFailed =
+      ('deny' in ran && ran.deny !== undefined) ||
+      fieldOf(ran, 'isError') === true ||
+      fieldOf(ran.result, 'success') === false
+    const isTaskish = /task|todo|plan/i.test(base)
+    const listed = isTaskish || fieldOf(e, 'todos') !== undefined ? listOf(e) : null
+
+    if (hasFailed || !(isTaskish || listed !== null)) {
       return ran
     }
 
-    const subject = textOf(fieldOf(task, 'subject')) ?? textOf(fieldOf(e, 'subject'))
-    const created: Task = {
-      id,
-      subject: subject ?? `Task ${id}`,
-      status: 'pending',
-      activeForm: textOf(fieldOf(e, 'activeForm')),
-    }
+    if (listed !== null) {
+      await inOrder(async () => {
+        const doneBefore = progressOf(await read($, tasksAtom)).done
 
-    await inOrder(async () => {
-      const run = await read($, runAtom)
-      const isNewRun = run === null || run.endMeter !== null
-
-      // A new batch starts clean: the finished one's rows are not carried on.
-      await update($, tasksAtom, list => [
-        ...(isNewRun ? [] : list.filter(one => one.id !== id)),
-        created,
-      ])
-      await settle($, false)
-    })
-
-    return ran
-  })
-
-  on('tool.call', { tool: 'TaskUpdate' }, async ($, e, next) => {
-    const ran = await next(e)
-    const id = textOf(fieldOf(e, 'taskId'))
-
-    if (id === null || fieldOf(ran.result, 'success') !== true) {
-      return ran
-    }
-
-    const rawStatus = fieldOf(e, 'status')
-    const status = statusOf(rawStatus)
-    const subject = textOf(fieldOf(e, 'subject'))
-    const activeForm = textOf(fieldOf(e, 'activeForm'))
-
-    await inOrder(async () => {
-      let hasCompleted = false
-
-      await update($, tasksAtom, list => {
-        if (rawStatus === 'deleted') {
-          return list.filter(one => one.id !== id)
-        }
-
-        const known = list.find(one => one.id === id)
-        // A task made before the mod loaded is first seen here.
-        const before: Task = known ?? {
-          id,
-          subject: `Task ${id}`,
-          status: 'pending',
-          activeForm: null,
-        }
-        const after: Task = {
-          ...before,
-          subject: subject ?? before.subject,
-          status: status ?? before.status,
-          activeForm: activeForm ?? before.activeForm,
-        }
-        hasCompleted = before.status !== 'completed' && after.status === 'completed'
-
-        return known === undefined
-          ? [...list, after]
-          : list.map(one => (one.id === id ? after : one))
+        await update($, tasksAtom, () => listed)
+        await settle($, progressOf(listed).done > doneBefore)
       })
-      await settle($, hasCompleted)
-    })
 
-    return ran
-  })
-
-  on('tool.call', { tool: 'TodoWrite' }, async ($, e, next) => {
-    const ran = await next(e)
-    const todos = fieldOf(e, 'todos')
-
-    if (!Array.isArray(todos) || 'deny' in ran && ran.deny !== undefined) {
       return ran
     }
 
-    const listed: Task[] = todos.flatMap((todo: unknown, index): Task[] => {
-      const subject = textOf(fieldOf(todo, 'content'))
-      const status = statusOf(fieldOf(todo, 'status'))
+    const resultText = textOf(fieldOf(ran, 'text')) ?? textOf(ran.result) ?? ''
 
-      return subject === null || status === null
-        ? []
-        : [
-            {
-              id: `todo-${index}`,
-              subject,
-              status,
-              activeForm: textOf(fieldOf(todo, 'activeForm')),
-            },
-          ]
-    })
+    if (/create/i.test(base)) {
+      const task = fieldOf(ran.result, 'task')
+      const subject =
+        textOf(fieldOf(task, 'subject')) ??
+        textOf(fieldOf(e, 'subject')) ??
+        textOf(fieldOf(e, 'content'))
+      const activeForm = textOf(fieldOf(e, 'activeForm'))
 
-    await inOrder(async () => {
-      const doneBefore = progressOf(await read($, tasksAtom)).done
+      await inOrder(async () => {
+        const run = await read($, runAtom)
+        const isNewRun = run === null || run.endMeter !== null
 
-      await update($, tasksAtom, () => listed)
-      await settle($, progressOf(listed).done > doneBefore)
-    })
+        await update($, tasksAtom, list => {
+          const kept = isNewRun ? [] : list
+          // The id comes from the result; failing that from its text
+          // ("Task #3 created"); failing that it is the next number.
+          const id =
+            textOf(fieldOf(task, 'id')) ??
+            textOf(fieldOf(ran.result, 'id')) ??
+            /#(\d+)/.exec(resultText)?.[1] ??
+            String(kept.reduce((most, one) => Math.max(most, Number(one.id) || 0), 0) + 1)
+          const created: Task = {
+            id,
+            subject: subject ?? `Task ${id}`,
+            status: 'pending',
+            activeForm,
+          }
+
+          // A new batch starts clean: the finished one's rows are not carried on.
+          return [...kept.filter(one => one.id !== id), created]
+        })
+        await settle($, false)
+      })
+
+      return ran
+    }
+
+    if (/update/i.test(base)) {
+      const id =
+        textOf(fieldOf(e, 'taskId')) ?? textOf(fieldOf(e, 'task_id')) ?? textOf(fieldOf(e, 'id'))
+
+      if (id === null) {
+        return ran
+      }
+
+      const rawStatus = fieldOf(e, 'status')
+      const status = statusOf(rawStatus)
+      const subject = textOf(fieldOf(e, 'subject'))
+      const activeForm = textOf(fieldOf(e, 'activeForm'))
+
+      await inOrder(async () => {
+        let hasCompleted = false
+
+        await update($, tasksAtom, list => {
+          if (rawStatus === 'deleted') {
+            return list.filter(one => one.id !== id)
+          }
+
+          const known = list.find(one => one.id === id)
+          // A task made before the mod loaded is first seen here.
+          const before: Task = known ?? {
+            id,
+            subject: `Task ${id}`,
+            status: 'pending',
+            activeForm: null,
+          }
+          const after: Task = {
+            ...before,
+            subject: subject ?? before.subject,
+            status: status ?? before.status,
+            activeForm: activeForm ?? before.activeForm,
+          }
+          hasCompleted = before.status !== 'completed' && after.status === 'completed'
+
+          return known === undefined
+            ? [...list, after]
+            : list.map(one => (one.id === id ? after : one))
+        })
+        await settle($, hasCompleted)
+      })
+    }
 
     return ran
   })

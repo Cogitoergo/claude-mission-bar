@@ -38,7 +38,7 @@ the bar adds nothing to your usage.
 
 | Part | Where it comes from | Exact or estimated |
 | --- | --- | --- |
-| Progress bar, done/total, current and next tasks | The session's task list (`TaskCreate`, `TaskUpdate`, `TodoWrite`) | Exact |
+| Progress bar, done/total, current and next tasks | The session's task list (`TaskCreate`, `TaskUpdate`, `TodoWrite`, `update_plan`) | Exact |
 | ETA | Average working time per completed task, times the tasks left | Estimated |
 | `5h` and `7d` fill | The rate-limit windows the last API response reported | Exact |
 | `tasks +N%` | The window's fill now, less its fill when the first task was created | Exact |
@@ -79,11 +79,11 @@ or delays anything Claude does.
 
 | Hook | What it does |
 | --- | --- |
-| `tool.call` for `TaskCreate`, `TaskUpdate`, `TodoWrite` | Lets the call run, then records the task's name and status for the bar. The call and its result are returned untouched. |
+| `tool.call`, every tool | Lets the call run and returns its result untouched. For the task-list tools (`TaskCreate`, `TaskUpdate`, `TodoWrite`, `update_plan`) it then records each task's name and status for the bar. For every other tool it only counts the tool's name, in memory, for `/mission-bar debug`. |
 | `turn.start`, `turn.complete` | Starts and stops the working-time clock and the refresh timer, and reads the turn's cache token counts. |
 | `session.start` | Registers the `/mission-bar` command and takes a first usage reading. |
 | `session.end` | Stops the timers, and clears the tracked tasks on `/clear`. |
-| `command.run` for `/mission-bar` | Shows or hides the bar. This is the only command the mod adds; it adds no tools or agents. |
+| `command.run` for `/mission-bar` | Shows or hides the bar; `/mission-bar debug` prints diagnostics. This is the only command the mod adds; it adds no tools or agents. |
 | `ui.render` for the band above the prompt | Draws the bar. |
 
 The mod makes no network or model requests, runs no processes, and reads or
@@ -113,6 +113,10 @@ Choose the user scope to have the bar in every session on that machine.
 
 The bar appears above the prompt once the mod is loaded. `/mission-bar`, or
 the `hide` button on the bar, shows or hides it.
+
+If the bar is missing tasks you expect, run `/mission-bar debug` after Claude
+has used its task list and include the output in an issue: it names the tools
+the mod saw, which shows how your build keeps its task list.
 
 ## Update
 

@@ -180,3 +180,28 @@ test('with no task list, the bar counts by prompt', async ($, on) => {
     await ui.unmount()
   }
 })
+
+test('a whole-list tool such as update_plan is followed', async ($, on) => {
+  on('clock.now', () => ({ value: 1_000_000 }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('session.usage', () => ({
+    value: { startedAt: 0, context: { window: 200_000, percent: 10 }, rateLimits: [] },
+  }))
+  on('tool.call', () => ({ result: {} }))
+
+  await $.tool.call({
+    tool: 'update_plan',
+    plan: [
+      { step: 'Find the project', status: 'completed' },
+      { step: 'Run the tests', status: 'in_progress' },
+      { step: 'Summarize', status: 'pending' },
+    ],
+    // Not one of this build's tools, so its name is outside the typed set.
+  } as never)
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+
+  expect((await ui.find({ type: 'Text', text: /^1\/3$/ }))?.text).toBe('1/3')
+  expect(await ui.find({ type: 'Text', text: /Run the tests/ })).toBeDefined()
+  await ui.unmount()
+})
